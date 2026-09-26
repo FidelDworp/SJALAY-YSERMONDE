@@ -215,3 +215,136 @@ IO10 is ontworpen voor thermostat-schakeling en is daardoor de meest logische ke
 Bij twijfel over de aansluiting: foto’s maken en eerst raadplegen voordat er permanent wordt aangesloten.
 
 Dit document is bedoeld als overnamedossier voor de repository.
+
+---
+
+De sketch voor de SJALAY is gebaseerd op deze twee recentste sketches voor ROOM en HVAC:
+- ESP32_C6_MATTER_ROOM_7mei_1330.ino
+- ESP32_C6_MATTER_HVAC_18mar_1105.ino
+
+PLAN: Eigenlijk moet deze controller (buiten de algemene platform functionaliteit en web UI) vooral deze vereenvoudigde serie taken uitvoeren om ons vakantiehuis vanop afstand te kunnen monitoren en besturen:
+
+- De standaard "roomsensors" van de roomsense pcb in de UI uitlezen. (Niet de optionele)
+- De sensor waarden met JSON string naar google sheets sturen om te loggen op lange termijn
+- Een 5V relais bedienen als de kamertemperatuur (DS18B20 en DHT22) onder de gewenste temperatuur is. Volg de bestaande logica ook ivm vocht. (De TSTAT sense functie uit de room sketch mag ook weggelaten worden.)
+- De pixel uitgang (IO4) moet een serie Powerpixels kunnen aansturen vanuit de UI met de bestaande logica
+
+Hier is een complete lijst van features die te realizeren zijn. Gebruik dit als leidraad.
+
+Bouwlijst voor de Sjalay-sketch. Geen Matter, geen TSTAT, geen optionele RoomSense-sensoren, geen Flobecq-kringen/ECO.
+
+A. Platform
+
+ESP32-C6, #define Serial Serial0
+Partities 16 MB: nvs 20 KB, otadata 8 KB, app0/app1 6 MB, SPIFFS ~4 MB
+Wi-Fi STA; SSID/wachtwoord uit NVS
+Static IP uit NVS, anders DHCP (gateway = x.x.x.1)
+Wi-Fi reconnect in loop() bij verlies (4G)
+AP-fallback + captive portal als Wi-Fi faalt (ROOM-<naam> / Sjalay-Setup)
+NTP + tijdzone CET/CEST
+NVS room-config voor alle instellingen
+AsyncTCP + ESPAsyncWebServer poort 80
+OTA .bin + reboot
+Factory reset via web + serial R binnen 5 s na boot / reset_nvs
+Crash-log in NVS (largest heap-block < 25 KB), teller + wissen in settings
+Geen mDNS, geen Matter, geen serial-statusdump (alleen boot-R)
+
+
+B. Web-UI (look van de roomsketch)
+
+Gele header (naam + uptime + datum/tijd), rode sidebar, witte pagina, blauwe labels
+Sidebar: Status / OTA / JSON / Settings (geen Matter)
+/ status — groepen + tabellen + sliders/switches
+Live-refresh via JS fetch('/json') (hybrid, weinig heap)
+/settings — formulier, opslaan + reboot
+/json compacte keys (Sheets + UI)
+/update OTA + reboot-knop
+Mobiele CSS max-width: 600px
+Sensor-⚠ rood (defect) / oranje (verdacht)
+HTML chunked AsyncResponseStream + char[] i.p.v. String (heap-arm)
+CORS * op JSON (dashboard/HA later)
+
+
+C. Pinnen (RoomSense + relais)
+
+PinFunctieIO6DHT22IO3DS18B20 OneWireIO1LDR1IO5PIR MOV1IO4NeoPixel / PowerpixelsIO10Relais → WOLF E1 (uitgang, actief LOW of zoals module)IO15ongebruikt (reserve relais)IO13/11I2C ongebruikt (geen TSL, geen MCP)
+
+Relais uit in setup() vóór Wi-Fi (fail-safe: E1 open)
+Watchdog: hang → reset → relais blijft uit tot logica weer loopt
+Relais volgt heating_on (geen 10 min-override)
+
+
+D. Sensoren (alleen standaard RoomSense)
+
+DHT22: temp + vocht, dauwpunt
+DS18B20 max 4: scan/rescan, CRC, nicknames, primaire → room_temp
+Fallback: DS ongeldig (NaN / <5 / >40 °C) → DHT22; beide defect → room_temp = 0 + melding
+LDR1 0–100 (donker = 100)
+PIR MOV1: LOW = beweging, triggers/min, licht-aan-timer
+Niet: CO₂, stof, TSL2561, MOV2, beam/LDR2, TSTAT-ingang
+
+
+E. Verwarming (softwarethermostaat)
+
+Schakelaar Verwarming in de UI (persistent NVS)
+Uit = relais altijd open (zomer)
+Aan = thermostat
+
+Setpoint-slider 10–30 °C (persistent)
+Dauwpuntbeveiliging: effective = max(setpoint, dew + dew_margin)
+heating_on = (verwarming aan) && (room_temp < effective − 0.5)
+Relais IO10 volgt heating_on onmiddellijk
+Duty% live + sliding window 4 u (12 × 20 min) → JSON/Sheets
+UI toont: room temp (DS + DHT), vocht, dauwpunt, dew-alert, setpoint, verwarming aan/uit, ketelvraag (heating_on), relais
+Niet: TSTAT, Thuis/Uit, override 10 min, vent%-slider, vent-PWM, HTTP-poll van andere ESPs
+
+
+F. Powerpixels (IO4) — bestaande room-logica, zonder MOV2
+
+1–30 pixels, aantal + nicknames in NVS
+Fade-engine sin-ease, 1–10 s
+RGB-kleurkiezer (web + NVS)
+Pixel 0: AUTO = MOV1 + LDR donker, of manueel aan
+Pixel 1+: manueel aan/uit, persistent
+Licht-aan tijd 0–30 min + 5 s overtime
+Bed-modus: MOV-pixel(s) gedwongen uit
+/capabilities — pixelnamen JSON
+/setcolor, /toggle_pixel_mode, /toggle_pixel, /set_fade_duration, /set_light_on_min, /toggle_bed
+
+
+G. Google Sheets
+
+gas_url in settings (leeg = uit)
+HTTPS POST elke 5 min, payload = /json
+Compact schema (één circuit, geen SCH/ECO):
+
+H. Settings-velden
+
+Room-naam, Wi-Fi SSID/wachtwoord, static IP, MAC (read-only)
+Heating setpoint default, dew-margin
+LDR dark-threshold
+Aantal pixels, default RGB, pixelnamen
+DS18B20 nicknames, primaire sensor, rescan 1-Wire
+Google Script URL
+Crashteller + wissen
+Opslaan + reboot; factory reset-knop
+Niet: CO₂/stof/zon/MOV2/beam/TSTAT-checkboxes, ECO, circuits, vent default, serial-verbose
+
+
+I. Statuspagina-groepen
+
+HVAC — temps, vocht, dauwpunt, alarm, setpoint-slider, verwarming-switch, ketelvraag-dot, relais-dot
+Verlichting — LDR, MOV1-dot, licht-tijd, RGB, bed, dim-snelheid, pixels
+Beweging — MOV1 trig/min
+Controller — IP, RSSI, heap, largest block
+
+
+J. Wat er bewust níet in zit
+
+- Matter / HomeKit / /matter
+- TSTAT-ingang, Thuis/Uit, override 10 min
+- MCP23017, 7 kringen, rooms pollen
+- ECO-boiler, SCH/WON-pompen, 6 vaste boiler-DS
+- CO₂, stof, TSL2561, MOV2, beam
+- Ventilator-PWM IO20
+- mDNS, MQTT (later als remote-vanuit-Flobecq nodig is)
