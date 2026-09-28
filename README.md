@@ -348,3 +348,253 @@ J. Wat er bewust níet in zit
 - CO₂, stof, TSL2561, MOV2, beam
 - Ventilator-PWM IO20
 - mDNS, MQTT (later als remote-vanuit-Flobecq nodig is)
+
+---
+
+## 10. SJALAY-sketch — huidige implementatie (v0.9, 27 sep 2026)
+
+Dit hoofdstuk beschrijft wat er **effectief gebouwd en werkend getest** is, als
+aanvulling op de bouwlijst (A–J) hierboven. Bij twijfel is de code in de
+sketch (`SJALAY_CONTROLLER_v0.9_...ino`) de bron van waarheid; dit is een
+leeswijzer erbij.
+
+### 10.1 Bestand en board-instellingen
+
+- Bestandsnaam bevat versie + datum, bv. `SJALAY_CONTROLLER_v0.9_27sep_pixel0fix.ino`.
+- Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB,
+  **Partition Scheme** = Custom (`partitions.csv` in dezelfde map),
+  **USB CDC On Boot** = Enabled.
+- `#define Serial Serial0` staat bovenaan — verplicht op de C6, anders werkt
+  de seriële monitor niet correct.
+- Versienummer staat in `#define SJALAY_VERSION` en verschijnt in de UI
+  (Controller-groep) en in `/json` (veld `ver`).
+
+### 10.2 Effectief gebruikte pinnen
+
+Van de volledige RoomSense-pinout (sectie 4) gebruikt de Sjalay-sketch enkel:
+
+| Pin | Functie | Opmerking |
+|-----|---------|-----------|
+| IO6 | DHT22 data | temp + vocht |
+| IO3 | DS18B20 OneWire | tot 4 sensoren op 1 bus |
+| IO1 | LDR1 analoog | 0-100 geschaald, donker = 100 |
+| IO5 | PIR MOV1 | `INPUT_PULLUP`, LOW = beweging |
+| IO4 | NeoPixel data | powerpixels, 1-30 stuks |
+| IO10 | Relais → WOLF E1 | actief-laag (`RELAY_ACTIVE_LOW`), fail-safe UIT vóór Wi-Fi |
+| IO15 | (nog) niet gebruikt | gereserveerd voor eventueel 2e relais |
+
+I²C (IO11/IO13), CO₂ (IO18), stof (IO7/IO12), LDR2 (IO2) en MOV2 (IO19)
+worden bewust niet aangesproken — zie punt J.
+
+### 10.3 Webinterface — pagina's en endpoints
+
+**Pagina's** (zichtbaar in de sidebar): `/` (Status), `/update` (OTA),
+`/settings` (Settings). `/json` staat ook in de sidebar als rechtstreekse
+link naar de ruwe data.
+
+**Actie-endpoints** (allemaal `HTTP GET`, AJAX via `submitAjax()` in de
+statuspagina, antwoorden met `text/plain "OK"` tenzij anders vermeld):
+
+| Endpoint | Werking |
+|---|---|
+| `/save_settings` | verwerkt het volledige Settings-formulier, herstart daarna |
+| `/factory_reset` | wist alle NVS-instellingen, herstart |
+| `/clear_crash_log` | wist de crash-teller |
+| `/rescan_ds` | herscant de DS18B20-bus, redirect naar `/settings` |
+| `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming |
+| `/toggle_relay_manual` | wisselt relaisstand in handmatige modus |
+| `/set_setpoint?value=` | setpoint-slider (10-30 °C) |
+| `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL |
+| `/toggle_pixel?idx=` | pixel `idx` aan/uit (idx 0 = pixel 0 in MANUEEL, idx 1+ = normale pixels) |
+| `/setcolor?r=&g=&b=` | zet + bewaart de powerpixel-kleur, past onmiddellijk toe |
+| `/set_fade_duration?value=` | dim-snelheid (1-10 s) |
+| `/set_light_on_min?value=` | licht-aan tijd na PIR-trigger (0-30 min) |
+| `/toggle_bed` | bed-modus aan/uit (dwingt pixel 0 uit, zie 10.6) |
+| `/capabilities` | JSON met pixelnamen (voor eventuele externe dashboards) |
+| `/reboot` | herstart direct |
+
+### 10.4 Settings-pagina — velden
+
+Eén formulier (`/save_settings`, herstart na opslaan) met:
+
+- **Algemeen**: room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP),
+  dauwpuntmarge, LDR donker-drempel (0-100), aantal pixels (1-30, herstart
+  nodig om echt van kleur/lengte te veranderen), Google Script-URL (leeg =
+  logging uit), MAC-adres (alleen-lezen).
+- **Pixel-namen**: 1 tekstveld per geconfigureerde pixel (pixel 0 heeft
+  "(MOV1)" als hint).
+- **Sensoren (DS18B20)**: 1 tekstveld per gevonden sensor (met huidige
+  temperatuur als referentie) + een dropdown om de **primaire sensor** te
+  kiezen (die bepaalt `room_temp` samen met de DHT22-fallback).
+- Los van dat formulier: **Herscan DS18B20-bus** (navigeert direct weg —
+  eerst opslaan als er nog wijzigingen in het formulier staan), **crash-log
+  wissen**, en **factory reset** (met bevestigingsdialoog).
+
+### 10.5 Verwarmingslogica (samengevat)
+
+- Twee modi, via `/toggle_heating_auto`: **Automatisch** (softwarethermostaat)
+  of **Handmatig** (directe schakelaar, handig om te testen zonder werkende
+  sensoren).
+- Automatisch: `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`;
+  relais gaat aan als `room_temp < effective_setpoint - 0.5`.
+- Handmatig: relais volgt gewoon de `/toggle_relay_manual`-schakelaar.
+- In beide gevallen wordt het relais **onmiddellijk** aangepast bij elke
+  wijziging (geen wachttijd tot de volgende sensorcyclus).
+- **Duty-cyclus** (nieuw in v0.8): een 4-uur sliding window opgebouwd uit
+  12 blokken van 20 minuten. Elk blok registreert welk aandeel van die
+  20 minuten het relais aan stond; het duty%-veld is het gemiddelde van de
+  laatste (max 12) blokken. Zichtbaar in de UI en meegestuurd in `/json`
+  en dus ook naar Google Sheets.
+
+### 10.6 Powerpixels — pixel 0 en bed-modus (belangrijk!)
+
+Pixel 0 is de "MOV-pixel" en heeft twee lagen logica, in deze volgorde van
+voorrang:
+
+1. **Bed-modus** (schakelaar in de groep "Verlichting") — als die AAN staat,
+   is pixel 0 **altijd** uit, wat de modus (AUTO/MANUEEL) ook is. Dit is een
+   bewuste ontwerpkeuze (zie punt F: "bed-modus dwingt MOV-pixel(s) uit"),
+   bedoeld om 's nachts geen bewegingslicht te krijgen.
+2. **Modus AUTO/MANUEEL** (schakelaar bovenaan de Powerpixels-groep) —
+   enkel relevant als bed-modus UIT staat:
+   - AUTO: pixel 0 gaat aan bij beweging (PIR MOV1) **en** het is donker
+     genoeg (LDR boven de donker-drempel).
+   - MANUEEL: een aparte AAN/UIT-schakelaar verschijnt, rechtstreeks
+     bediend door de gebruiker.
+
+**Aandachtspunt uit de praktijk:** als bed-modus per ongeluk aan blijft
+staan van een eerdere test, lijkt de MANUEEL-schakelaar van pixel 0 niet te
+werken (hij springt in de UI terug uit en de LED gaat nooit branden) — dit
+is geen bug, bed-modus wint gewoon altijd. Sinds v0.9 toont de UI dit
+expliciet met een eigen statusregel ("Bed-modus actief → geforceerd UIT")
+zodra dat het geval is, met een knop om ze direct uit te zetten.
+
+Pixels 1 en hoger zijn altijd rechtstreeks manueel aan/uit, persistent in
+NVS, zonder bed-override.
+
+### 10.7 Google Sheets-logging
+
+- Ingeschakeld zodra `gas_url` (Apps Script webhook-URL) is ingevuld in
+  Settings.
+- Elke 5 minuten (niet in AP-modus) wordt de volledige `/json`-payload via
+  HTTPS POST naar die URL gestuurd (`WiFiClientSecure` met `setInsecure()`,
+  Apps Script's typische 302-redirect wordt gevolgd).
+- Laatste resultaatcode (`gcode`) en tijdstip zijn zichtbaar in de
+  "Logging"-groep op de statuspagina.
+
+### 10.8 Shelly-stopcontacten per pixel (optioneel, nieuw in v0.10)
+
+Elke pixel (ook pixel 0) kan gekoppeld worden aan **0 tot 3 Shelly
+slimme stopcontacten**, die dan simultaan meeschakelen met de pixel.
+Bedoeld voor bv. een echte lamp die mee moet gaan met een powerpixel als
+indicatie, zonder dat er Matter/HomeKit/cloud bij komt kijken — alles
+verloopt lokaal over het eigen netwerk.
+
+**Instellen** (Settings, onder "Pixel-namen"): een extra tekstveld per
+pixel met het formaat
+```
+192.168.0.50:Keukenlamp,192.168.0.51:Tafellamp
+```
+— `ip:nickname`-paren gescheiden door een komma, max. 3 per pixel. Leeg
+laten = geen koppeling voor die pixel.
+
+**Werking:** de sketch onthoudt de vorige aan/uit-status van elke pixel
+en vergelijkt die elke lus-cyclus met de actuele status
+(`updatePixelLogic()`). Enkel bij een **effectieve wissel** (rand-detectie,
+dus niet continu) stuurt hij voor elk gekoppeld IP een korte lokale
+HTTP-GET:
+```
+http://<ip>/relay/0?turn=on
+http://<ip>/relay/0?turn=off
+```
+Dit endpoint werkt zowel op oudere (Gen1) als nieuwere (Gen2/Gen3, "Plus")
+Shelly-stopcontacten, zonder Shelly-cloud-account of app nodig. Er is
+bewust **geen retry en geen terugkoppeling** ingebouwd (fire-and-forget,
+zoals de Sheets-log) — met een korte timeout (1-1,5s connect/response) zodat
+een uitgeschakelde of onbereikbare Shelly de hoofdlus niet blokkeert.
+
+**Op de statuspagina** staat naast elke pixelnaam, indien gekoppeld, een
+kleine grijze aanduiding met de ingestelde nicknames (bv. "→ Keukenlamp,
+Tafellamp"). Dit toont enkel wát er gekoppeld is, niet de actuele
+live-status van de Shelly zelf (geen polling, om de pagina snel te houden).
+
+**Praktisch:** geef elke Shelly een **vast IP** (reservering in de router,
+of instelbaar in de Shelly-app zelf) — anders verandert het gekoppelde IP
+na een herstart van de Shelly en moet je het opnieuw instellen in Settings.
+
+### 10.9 Gekende aandachtspunten
+
+- NVS-instellingen (Wi-Fi, kleuren, pixelnamen, Shelly-koppelingen,
+  bed-modus, …) blijven behouden over firmware-updates heen (zelfde
+  `Preferences`-namespace `"sjalay-cfg"`). Enkel een **factory reset** (web
+  of seriële `R` binnen 5 s na boot) wist alles. Test dus na een update
+  altijd even de status van schakelaars zoals bed-modus, automatische
+  verwarming, enz. — die staan mogelijk nog zoals bij de vorige test.
+- Zonder RoomSense-shield aangesloten werkt de sketch nog steeds: DHT22
+  geeft NaN, DS18B20-telling is 0, dit wordt netjes gedetecteerd en getoond
+  (geen crash), met een melding in de HVAC-groep.
+- De Shelly-koppeling is volledig los te testen van de RoomSense-hardware:
+  ook zonder sensoren kan je pixels manueel aan/uit zetten in de UI en zo
+  de Shelly-HTTP-calls verifiëren (serial monitor toont `[Shelly] ... -> HTTP ...`).
+
+### 10.10 Versiegeschiedenis (kort)
+
+| Versie | Belangrijkste inhoud |
+|---|---|
+| v0.1 – v0.1.1 | Platformlaag (Wi-Fi/AP/NTP/OTA/crash-log/factory-reset), AP-SSID-zichtbaarheidsfix |
+| v0.2 | Sensoren: DHT22, DS18B20, LDR1, PIR MOV1 |
+| v0.3 | Verwarmingslogica + relais IO10 |
+| v0.4 | Powerpixels (fade-engine, AUTO/manueel, bed-modus) |
+| v0.5 | Volledige AJAX-live-UI + compact `/json` |
+| v0.6 | UI-stijl exact zoals ROOM-sketch, heap-KB-bug gefixt |
+| v0.7 – v0.7.1 | Pixel-0 AUTO/MANUEEL-herwerking, Google Sheets-logging, compile-fix |
+| v0.8 | STAP 7: DS18B20-nicknames/primaire sensor instelbaar, LDR-drempel instelbaar, duty-cyclus 4u |
+| v0.9 | Bugfix: bed-modus/pixel-0-interactie nu expliciet zichtbaar in de UI |
+| v0.10 | STAP 8: optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud) |
+
+---
+
+## 11. JSON-velden (`/json`)
+
+Dit is het compacte schema dat zowel de live-UI (elke 3 s via `fetch`) als
+de Google Sheets-log (elke 5 min) gebruikt. Booleans staan als JSON
+`true`/`false`, niet als 0/1 (behalve waar expliciet vermeld).
+
+| Veld | Type | Beschrijving |
+|---|---|---|
+| `rid` | string | Room-naam (uit Settings) |
+| `ver` | string | Firmwareversie (bv. `"0.9"`) |
+| `ip` | string | IP-adres (of `192.168.4.1` in AP-modus) |
+| `rssi` | int | Wi-Fi signaalsterkte in dBm (0 in AP-modus) |
+| `heap` | uint | Vrije heap in KB |
+| `lb` | uint | Grootste vrije geheugenblok in KB (indicator voor fragmentatie) |
+| `crash` | uint | Aantal geregistreerde crashes (lage-heap-events) |
+| `upt` | ulong | Uptime in seconden sinds boot |
+| `ap` | bool | `true` = toestel zit in AP/setup-modus |
+| `t2` | float | DHT22-temperatuur in °C (0 als sensor defect/ontbreekt) |
+| `t2ok` | bool | DHT22-meting geldig? |
+| `h` | float | DHT22-relatieve vochtigheid in % |
+| `dp` | float | Berekend dauwpunt in °C (uit DHT22) |
+| `t1` | float | DS18B20 primaire-sensor-temperatuur in °C |
+| `dsok` | bool | Minstens 1 DS18B20 gevonden? |
+| `dsc` | int | Aantal gevonden DS18B20-sensoren (max 4) |
+| `rt` | float | `room_temp` — effectief gebruikte kamertemperatuur (DS18B20 primair, fallback DHT22, anders 0) |
+| `tm` | string | Waarschuwingstekst bij sensorfout (leeg = alles ok) |
+| `ldr` | int | LDR1-lichtwaarde, geschaald 0-100 (100 = donker) |
+| `mov` | int | Aantal PIR MOV1-triggers in de laatste minuut |
+| `hauto` | bool | Verwarming in automatische modus (softwarethermostaat)? |
+| `hsp` | int | Ingestelde setpoint-temperatuur in °C (10-30) |
+| `heff` | float | Effectieve setpoint in °C (incl. dauwpuntmarge indien van toepassing) |
+| `rman` | bool | Gewenste relaisstand in handmatige modus |
+| `hon` | bool | Huidige ketelvraag / relaisstand (`heating_on`) |
+| `duty` | float | Duty-cyclus verwarming over de laatste 4 uur, in % |
+| `bed` | bool | Bed-modus actief? (dwingt pixel 0 uit) |
+| `p0m` | int | Pixel-0-modus: `0` = AUTO, `1` = MANUEEL |
+| `p0on` | bool | Gewenste pixel-0-staat in MANUEEL (los van of bed-modus dat overschrijft) |
+| `pn` | int | Aantal geconfigureerde pixels |
+| `fd` | int | Dim/fade-snelheid in seconden (1-10) |
+| `lom` | int | Licht-aan-tijd in minuten (0-30) na een PIR-trigger |
+| `pon` | string | Bitstring (lengte = `pn`) met actuele aan/uit-status per pixel; teken op index *i* = pixel *i* (`'1'`=aan, `'0'`=uit) |
+| `nr`, `ng`, `nb` | int | Huidige RGB-kleurwaarde (0-255) van de powerpixels |
+| `gas` | bool | Google Sheets-logging ingeschakeld (URL niet leeg)? |
+| `gcode` | int | Laatste HTTP-resultaatcode van de Sheets-POST (0 = nog niet geprobeerd) |
