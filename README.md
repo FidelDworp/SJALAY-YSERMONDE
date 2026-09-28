@@ -1,713 +1,258 @@
-# Remote bediening WOLF-ketel + SWW-boiler via ESP32-C6 + 4G
+# Sjalay Controller — vakantiewoning op afstand monitoren en besturen (Recht)
 
-**Project:** Remote in-/uitschakelen van de WOLF Brander F/CNK/U-25 + CB-155 boiler  
-**Locatie:** Sjalay (Recht) – geen permanente WiFi/fiber  
-**Datum overname:** september 2026  
+**Locatie:** Sjalay (Recht) — geen permanente WiFi/fiber, gevoed via 4G  
+**Basis:** ESP32-C6 + RoomSense shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
+**Laatst bijgewerkt:** 28 sep 2026
 
----
+Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vier dingen tegelijk in het vakantiehuis:
 
-## 1. Doel
-
-De klassieke stookolieketel en de warmwaterboiler (SWW) op afstand kunnen bedienen (aan/uit warmtevraag) vanaf telefoon of Home Assistant, zonder permanente vaste internetverbinding.
-
-**Identificatie toestellen (typeplaatjes):**
-- **Ketel:** WOLF F/CNK/U-25  
-  - Serienummer: 168120 / 1144  
-  - Bouwjaar: 2014  
-  - Vermogen: 20–25 kW  
-  - Mat.-Nr.: 8906850  
-- **SWW-boiler:** CB-155 / FB-155 / TB-155  
-  - Inhoud: 155 liter  
-  - Serienummer: 1214  
-
-Huidige oplossing:
-- TV/muziek via Telenet ONE op smartphones
-- 4G-data via Telenet ONE SIM in dedicated router
-- ESP32-C6 + RoomSense shield als IoT-controller met MQTT (of vergelijkbaar)
+1. **Verwarming op afstand aan/uit** — relais op de E1-ingang van de WOLF-ketel
+2. **Sensoren monitoren** — temperatuur, vocht, licht, beweging, met logging naar Google Sheets
+3. **Verlichting aansturen** — powerpixels, optioneel gekoppeld aan Shelly-stopcontacten
+4. **Overal bereikbaar** — via Tailscale, zonder vaste internet-IP of poort-forwarding
 
 ---
 
-## 2. Netwerk / Internet
+## 1. Verwarming & warmwater op afstand
 
-| Onderdeel              | Keuze                          | Opmerking |
-|------------------------|--------------------------------|---------|
-| 4G-router              | **TP-Link Archer MR600**       | Desktop-model, Cat6, externe antennes, 4× Gigabit |
-| SIM                    | Telenet ONE data-SIM (onbeperkt) | Uit oude iPhone 5 gehaald |
-| Snelheid (gemeten)     | ≈ 125 Mb/s down / 25 Mb/s up   | Meer dan voldoende voor IoT |
-| Alternatief overwogen  | FRITZ!Box 6825 4G              | Goedkoper, alleen 2,4 GHz Wi-Fi 6, USB-C |
+### 1.1 Toestellen
 
-**Status:** Router is gekocht (Tweedekans Coolblue ± €110), geïnstalleerd en werkt perfect.
+- **Ketel:** WOLF F/CNK/U-25 — SN 168120/1144, bouwjaar 2014, 20–25 kW, Mat.-Nr. 8906850
+- **SWW-boiler:** CB-155/FB-155/TB-155, 155 liter, SN 1214
+- **Bediening:** BM 2744329 (wandmodule in de living, communiceert via eBUS)
 
-**LAN-instellingen (gewijzigd 28 sep 2026 — zie hoofdstuk 12 voor de reden):**
+### 1.2 Aansluitpunt: E1-ingang op de ketel (gekozen)
 
-| | Waarde |
+De ketel heeft een parametreerbare, potentiaalvrije ingang **E1** op de klemmenstrook van de ketel zelf (niet op de BM-wandsokkel). De functie wordt bepaald door parameter **HG13** (fachmannebene, instelbereik 1–11).
+
+**Gekozen instelling: HG13 = 1 (Raumthermostat)** — dit is ook de fabrieksinstelling, dus vermoedelijk hoeft er niets gewijzigd te worden, enkel te bevestigen op de BM.
+
+| E1-toestand | Effect |
 |---|---|
-| Subnet | **192.168.50.0/24** (was 192.168.1.0/24) |
-| Gateway / routerbeheer | `192.168.50.1` (via TP-Link webinterface) |
-| DHCP-pool | `192.168.50.100` – `192.168.50.199` |
-| Vaste IP's (buiten DHCP-pool, handmatig toe te wijzen) | `192.168.50.2` – `192.168.50.99`, bv. ESP32-C6 op `.10`, Shelly-stopcontacten op `.11`–`.14` |
+| **Open** | Verwarming (Heizbetrieb) geblokkeerd — "Sommerbetrieb" |
+| **Gesloten** | Verwarming draait normaal, volgens het schema/setpoint van de BM |
 
-Oude iPhone 5 (opgeblazen batterij) → later inleveren bij Krëfel Geraardsbergen (Astridlaan 40).
+Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed en blijft dus volledig door de BM zelf beheerd — precies zoals gewenst: verwarming op afstand sturen, SWW aan de BM overlaten.
 
----
+**Overwogen, niet gekozen:**
+- *HG13 = 2 (Maximalthermostat)* — zou bij open contact ook warmwater én vorstbeveiliging blokkeren. Te ingrijpend.
+- *Fernschaltkontakt op de BM-wandsokkel* (klemmen 3-4, potentiaalvrij) — functioneel gelijkaardig, maar stuurt altijd CV **en** SWW samen, niet apart regelbaar. Bewaard als alternatief/backup-aansluitpunt indien nodig, makkelijker bereikbaar (living i.p.v. ketelruimte).
+- *HG13 = 5–11* — specifieke technische functies (rookgasklep, circulatie, brandersperring, externe brandervraag, retourvoeler), niet geschikt als eenvoudige aan/uit-schakelaar.
 
-## 3. Ketel- en boiler-interface (kern)
-
-### 3.1 Parametreerbare ingang E1
-De ketel heeft één **parametreerbare ingang E1** (potentiaalvrij contact).  
-Deze wordt geconfigureerd via parameter **HG13**.
-
-| HG13-instelling     | Effect bij **open** contact                  | Effect bij **gesloten** contact      | Gebruik |
-|---------------------|----------------------------------------------|--------------------------------------|---------|
-| **RT** (waarde 1)   | Alleen verwarming geblokkeerd (zomerstand)   | Verwarming vrijgegeven               | Alleen CV |
-| **WW / DHW**        | Alleen warmwaterbereiding geblokkeerd        | Warmwaterbereiding vrijgegeven       | Alleen SWW |
-| **RT/WW** of **RT/DHW** | Verwarming **én** warm water geblokkeerd | Beide vrijgegeven                    | Gecombineerd (aanbevolen start) |
-
-De BM 2744329 communiceert via **eBUS**. E1 werkt onafhankelijk/parallel van de BM.
-
-### 3.2 Waar vind ik het E1-contact?
-1. Open de regelaar / bedieningspaneel van de ketel (meestal vooraan of zijkant).
-2. Zoek de klemmenstrook of stekkerlijst.
-3. Zoek de klemmen die gemarkeerd zijn als **E1** (soms "Eingang E1" of "parametreerbare ingang").
-4. Het is een 2-polige aansluiting (potentiaalvrij).  
-   Maak **duidelijke foto's** van de hele klemmenstrook voordat je iets losmaakt.
-
-### 3.3 Hoe parameters (HG13) bekijken en wijzigen?
-1. Ga naar de **BM 2744329** bedieningsmodule (muurthermostaat).
-2. Ga naar het **installateurs-/vakmanniveau**.  
-   Meestal door een code in te voeren (vaak **1111** of vergelijkbaar – zie handleiding BM of probeer standaard WOLF-codes).
-3. Zoek parameter **HG13** (of "Eingang E1" / "Functie E1").
-4. Noteer de huidige waarde.
-5. Wijzig indien nodig naar de gewenste functie (RT, WW of RT/WW).
-6. Sla op en verlaat het installateursniveau.
-
-**Tip:** Noteer altijd de originele waarde voordat je iets wijzigt.
-
-### 3.4 Aanbevolen hardware-aansturing
-- ESP32-C6 stuurt een **potentiaalvrij relais** via een GPIO
-- Relaiscontact over de E1-klemmen van de ketel
-- Originele BM blijft bij voorkeur aangesloten als backup
-
-**Belangrijke veiligheidsregels**
+**Veiligheid — nooit vergeten:**
 - Nooit veiligheidscontacten (STB, maximumthermostaat, druk…) overbruggen
-- Galvanische scheiding via relais (optocoupler of goed relais)
-- Fail-safe overwegen (NC-contact of watchdog) zodat de ketel niet permanent blijft branden bij crash van de ESP
-- Eerst testen met ketel uitgeschakeld / in service-stand
+- Galvanische scheiding via relais (optocoupler of degelijk relais)
+- Relais **standaard open** (niet-bekrachtigd) gebruiken: bij stroomuitval, ESP-crash of vóór de Wi-Fi-verbinding staat, valt het systeem altijd terug naar de veilige "geblokkeerd"-toestand
+- Foto's maken van de volledige klemmenstrook vóór je iets loskoppelt
+
+### 1.3 Bedrijfsstrategie voor een vakantiewoning (belangrijk!)
+
+Uitgangspunt: een dure stookolieketel mag **niet blijven draaien terwijl er niemand is**, behalve voor vorstbeveiliging — maar bij aankomst/vertrek moet er wél volledige controle op afstand zijn, zonder dat iemand fysiek aan de BM moet komen.
+
+**Hoe dat met E1/HG13=1 werkt:**
+
+E1 is de **hoofdschakelaar** die alles overstijgt: zolang E1 **open** staat, blijft de verwarming geblokkeerd, ongeacht wat de BM's eigen klok/schema zegt ("unabhängig von einem digitalen Wolf-Regelungszubehör").
+
+⚠️ **Nog te verifiëren ter plaatse:** de HG13-tabel vermeldt bij optie 1 enkel dat de "Heizbetrieb" geblokkeerd wordt — in tegenstelling tot optie 2, die expliciet óók de vorstbeveiliging blokkeert. Dat suggereert sterk dat de **vorstbeveiliging actief blijft** ook met E1 open — maar bevestig dat expliciet (installateur vragen, of de Montageanleitung van de ketel zelf onder "Frostschutzfunktion" nakijken) vóór je hierop vertrouwt tijdens een koude, onbewoonde periode.
+
+**Praktische regel — zo werkt het in gebruik:**
+
+1. **De BM-module blijft fysiek gewoon staan** op een normale, comfortabele instelling (Automatikbetrieb, gewoon dag/nacht-schema, comfortabele setpoint bv. 20°C). Er moet **nooit iemand aan de BM zelf** komen bij aankomst of vertrek.
+2. **Standaard (niemand aanwezig): E1 open** (relais uit) → verwarming geblokkeerd, vorstbeveiliging blijft actief (zie verificatiepunt hierboven).
+3. **Vóór aankomst:** relais **sluiten** via de Sjalay-webinterface — verwarming start en volgt vanaf dan gewoon het normale BM-schema/setpoint. Kan al enkele uren op voorhand, zodat het huis warm is bij aankomst.
+4. **Tijdens verblijf:** relais gesloten laten — dagelijkse temperatuurregeling gebeurt volledig door de BM zelf, zoals in elk gewoon huis.
+5. **Bij vertrek:** relais weer **openen** via de webinterface → terug naar geblokkeerd/vorstbeveiliging-only, zonder dat er iets aan de BM zelf moest gebeuren.
+
+Zo wordt de BM een "domme" thermostaat die altijd hetzelfde comfortschema aanhoudt, en is E1 de enige externe aan/uit-knop — volledige afstandsbediening zonder de BM ooit te moeten herprogrammeren.
 
 ---
 
-## 4. Hardware-architectuur (RoomSense shield)
+## 2. Netwerk
 
-De ESP32-C6 wordt gemonteerd op een **RoomSense shield**.  
-Dit shield heeft twee RJ45-aansluitingen:
+| Onderdeel | Instelling |
+|---|---|
+| 4G-router | TP-Link Archer MR600 (Telenet ONE data-SIM, uit oude iPhone 5) |
+| Snelheid | ≈125/25 Mb/s |
+| Subnet Sjalay | **192.168.50.0/24** — gateway `.50.1`, DHCP-pool `.100–.199`, vaste IP's `.2–.99` |
 
-| Kabel              | Bestemming                                      | Lengte     | Doel |
-|--------------------|--------------------------------------------------|------------|------|
-| **RoomSense UTP**  | RoomSense sensorprintje (temp, licht, PIR, …)   | tot 10 m   | Sensoren in de kamer boven de ketel |
-| **OPTIONAL RJ45**  | Relais-module                                   | kort       | Aansturing van het E1-relais |
-
-### Aanbevolen plaatsing
-- **ESP32-C6 + shield + relais** → in behuizing **in de kelder bij de ketel** (korte, betrouwbare bedrading naar E1).
-- **RoomSense sensorprintje** → via max. 10 m UTP-kabel op de muur in de kamer boven de ketel (betere meetwaarden voor temperatuur/licht).
-
-### Pin-mapping RoomSense shield (ESP32-C6)
-
-| ESP32-C6 Pin | Device/Functie                                  | Opmerking / Gebruik voor dit project |
-|--------------|--------------------------------------------------|--------------------------------------|
-| IO13         | I2C SDA (Pull-up 4.7k → 5V)                     | Sensoren |
-| IO11         | I2C SCL (Pull-up 4.7k → 5V)                     | Sensoren |
-| IO3          | DS18B20 OneWire                                 | Temperatuursensor |
-| IO4          | Pixels data                                     | Status-LED's |
-| IO5          | MOV1 PIR                                        | Beweging |
-| IO6          | DHT22 data                                      | Temp/vocht |
-| IO12         | Sharp dust LED out                              | Stofsensor |
-| IO7          | Sharp dust analog                               | Stofsensor |
-| IO1          | LDR1 analog (10k pull-up → 3V3)                 | Lichtsensor |
-| IO18         | CO2 PWM input (MH-Z19 = 5V!)                    | CO₂ |
-| IO19         | MOV2 PIR (of Dotstar CLK)                       | Beweging 2 |
-| **IO10**     | **TSTAT switch (Gnd = ON)**                     | **Zeer geschikt voor relais-aansturing** |
-| IO2          | LDR2 analog                                     | Lichtsensor 2 |
-| **IO15**     | **Reserve 2 (Output)**                          | **Goed alternatief voor relais** |
-| **IO20/WKP** | **Reserve 3**                                   | Alternatief voor relais |
-| IO0          | Reserve 1 (BOOT pin – voorzichtig)              | Liever niet gebruiken |
-| GND          | Ground                                          | — |
-| VIN          | Power Input (3.6–6V)                            | Voeding |
-| 3V3          | 3.3V Output                                     | — |
-
-**Aanbeveling voor het relais:**  
-Gebruik **IO10** (TSTAT switch) of **IO15** (Reserve 2) als stuuruitgang naar de relais-module.  
-IO10 is ontworpen voor thermostat-schakeling en is daardoor de meest logische keuze.
+*Hernummerd van `192.168.1.0/24` op 28/09 — zie hoofdstuk 3 voor de reden (subnet-conflict met het thuisnetwerk in Zarlardinge, opgelost door Recht een eigen bereik te geven).*
 
 ---
 
-## 5. Geplande hardware (eindopstelling)
+## 3. Toegang van buitenaf — Raspberry Pi + Tailscale
 
-- ESP32-C6 op **RoomSense shield**
-- Behuizing in de kelder bij de ketel
-- Relais-module (via OPTIONAL RJ45 of direct)
-- RoomSense sensorprintje (via max. 10 m UTP) in de kamer boven
-- Temperatuur-, licht- en eventueel andere sensoren
-- Voeding via de 4G-router of aparte adapter
+Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het hele lokale Sjalay-netwerk (niet enkel de Pi) is zo van overal bereikbaar (mobiele data, elders wifi), zonder poort-forwarding of vast internet-IP.
 
----
+**Setup (28 sep 2026):**
+- Raspberry Pi OS 64-bit (Debian 13), geflashed via Raspberry Pi Imager, SSH + wachtwoord-auth ingeschakeld
+- Hostname `fidel` → bereikbaar via `fidel.local` (mDNS), onafhankelijk van IP/subnet
+- Tailscale: `curl -fsSL https://tailscale.com/install.sh | sh`, dan `sudo tailscale up --advertise-routes=192.168.50.0/24 --accept-dns=false`
+- Route goedgekeurd in Tailscale-adminconsole (machine **rpi-fidel-sjalay**)
+- IP-forwarding ingeschakeld (`net.ipv4.ip_forward=1`, `net.ipv6.conf.all.forwarding=1`)
 
-## 6. Componentenlijst om mee te nemen naar Sjalay (testen)
+**Subnet-conflict opgelost:** het thuisnetwerk in Zarlardinge gebruikte hetzelfde `192.168.1.0/24` als het oorspronkelijke Sjalay-netwerk. Tailscale routeert per subnet/CIDR-blok, dus twee subnet-routers met exact hetzelfde bereik geven een conflict. Opgelost door Recht te hernummeren naar `192.168.50.0/24` (zie hoofdstuk 2) — het thuisnetwerk bleef ongewijzigd.
 
-### Essentieel
-- [ ] ESP32-C6 + RoomSense shield
-- [ ] 5V of 3.3V **relais-module** (bij voorkeur met optocoupler / galvanische scheiding)
-- [ ] RJ45-kabel(s) voor RoomSense + OPTIONAL
-- [ ] Jumperkabels / breadboard-draadjes
-- [ ] USB-C kabel + powerbank of adapter
-- [ ] Multimeter
-- [ ] Schroevendraaierset + zaklamp
+**Resultaat:** bevestigd werkend — de Sjalay-webinterface is bereikbaar vanaf een iPhone met wifi uitgeschakeld (enkel mobiele data), via de Tailscale-app.
 
-### Handig
-- [ ] Laptop/telefoon met serial monitor / ESPHome
-- [ ] Korte 2-aderige kabel (0,5–0,75 mm²) voor E1
-- [ ] Isolatietape / krimpkous
-- [ ] Foto's van klemmenstrook (E1)
+**Thuis (Zarlardinge):** er draait daar al een aparte Tailscale-subnet-router (`rpi-raspberrypi-zarlar`, met Funnel voor een publiek-bereikbare dienst). Omschakeling naar dezelfde subnet-router-aanpak staat gepland — stappen daarvoor in een apart to-do-document ("Tailscale subnet router — Zarlar RPi").
 
-### Optioneel
-- [ ] Temperatuursensor (DS18B20 of BME280)
-- [ ] LED + weerstand als statusindicatie
+**Nog te doen:**
+- [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd` op de Pi)
+- [ ] Shelly-stopcontacten een vast IP geven in `192.168.50.x` en koppelen via `/settings` (zie 5.7)
 
 ---
 
-## 7. Stappenplan (hoog niveau)
+## 4. Hardware — RoomSense shield pinout (ESP32-C6)
 
-1. **Op Sjalay – verkenning**
-   - Typeplaatjes controleren (al gedaan)
-   - Ketel openen → **E1-klemmen lokaliseren** + foto's
-   - Op de BM → installateursniveau → **HG13** uitlezen
-   - Beslissen: RT, WW of RT/WW
+| Pin | Device/Functie | Gebruikt door Sjalay-sketch? |
+|-----|-----------------|-------------------------------|
+| IO13 | I2C SDA (pull-up 4.7k → 5V) | nee |
+| IO11 | I2C SCL (pull-up 4.7k → 5V) | nee |
+| IO3 | DS18B20 OneWire | **ja** — temperatuur |
+| IO4 | Pixels data | **ja** — powerpixels |
+| IO5 | PIR MOV1 | **ja** — beweging |
+| IO6 | DHT22 data | **ja** — temp/vocht |
+| IO12 | Sharp dust LED out | nee |
+| IO7 | Sharp dust analog | nee |
+| IO1 | LDR1 analog (10k pull-up → 3V3) | **ja** — licht |
+| IO18 | CO2 PWM input (MH-Z19, 5V!) | nee |
+| IO19 | MOV2 PIR (of Dotstar CLK) | nee |
+| **IO10** | **TSTAT switch (Gnd = ON)** | **ja — relais → WOLF E1** |
+| IO2 | LDR2 analog | nee |
+| **IO15** | Reserve 2 (Output) | gereserveerd (evt. 2e relais) |
+| IO20/WKP | Reserve 3 | nee |
+| IO0 | Reserve 1 (BOOT pin) | nee — liever niet gebruiken |
+| GND / VIN / 3V3 | Voeding | — |
 
-2. **Testopstelling**
-   - Relais aansluiten op E1 (via IO10 of IO15)
-   - ESP32 simpele sketch: relais open/dicht
-   - Controleren of ketel/boiler correct reageert
-
-3. **Software**
-   - ESPHome of Arduino + MQTT
-   - Verbinding met Archer MR600 (2,4 GHz)
-   - Remote bediening + status
-
-4. **Definitieve montage**
-   - ESP + shield + relais in behuizing in de **kelder**
-   - RoomSense sensorprintje via max. 10 m UTP in de kamer boven
-   - Netjes bedraden + fail-safe
-
----
-
-## 8. Belangrijke documentatie / referenties
-
-- WOLF parameter **HG13** = functie van ingang E1 (RT / WW / RT/WW)
-- BM 2744329 = bedieningsmodule (eBUS)
-- Archer MR600 = 4G Cat6 dual-band router
-- ESP32-C6 + RoomSense shield = Wi-Fi 6 + sensoren + TSTAT-uitgang
+IO10 is fail-safe-laag (`RELAY_ACTIVE_LOW`) en staat vóór Wi-Fi-verbinding al UIT in `setup()`.
 
 ---
 
-## 9. Status (25 sept 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.10, 28 sep 2026)
 
-- [x] 4G-router gekozen, gekocht en werkend (125/25 Mb/s)
-- [x] Oude iPhone 5 onbruikbaar → later recyclen bij Krëfel
-- [x] Typeplaatjes ketel + boiler gedocumenteerd
-- [x] RoomSense shield pinout + architectuur vastgelegd
-- [ ] E1-klemmen en HG13 ter plaatse controleren
-- [ ] Relais-test met ESP32 (IO10 of IO15)
-- [ ] Definitieve software + behuizing
+Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.10_...ino`) de bron van waarheid; dit is een leeswijzer erbij.
 
----
+### 5.1 Bestand en board-instellingen
 
-**Veiligheid eerst.**  
-Bij twijfel over de aansluiting: foto's maken en eerst raadplegen voordat er permanent wordt aangesloten.
+- Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB, **Partition Scheme** = Custom (`partitions.csv`), **USB CDC On Boot** = Enabled
+- `#define Serial Serial0` bovenaan — verplicht op de C6
+- Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep) en `/json` (`ver`)
 
-Dit document is bedoeld als overnamedossier voor de repository.
+### 5.2 Webinterface — pagina's en endpoints
 
----
-
-De sketch voor de SJALAY is gebaseerd op deze twee recentste sketches voor ROOM en HVAC:
-- ESP32_C6_MATTER_ROOM_7mei_1330.ino
-- ESP32_C6_MATTER_HVAC_18mar_1105.ino
-
-PLAN: Eigenlijk moet deze controller (buiten de algemene platform functionaliteit en web UI) vooral deze vereenvoudigde serie taken uitvoeren om ons vakantiehuis vanop afstand te kunnen monitoren en besturen:
-
-- De standaard "roomsensors" van de roomsense pcb in de UI uitlezen. (Niet de optionele)
-- De sensor waarden met JSON string naar google sheets sturen om te loggen op lange termijn
-- Een 5V relais bedienen als de kamertemperatuur (DS18B20 en DHT22) onder de gewenste temperatuur is. Volg de bestaande logica ook ivm vocht. (De TSTAT sense functie uit de room sketch mag ook weggelaten worden.)
-- De pixel uitgang (IO4) moet een serie Powerpixels kunnen aansturen vanuit de UI met de bestaande logica
-
-Hier is een complete lijst van features die te realizeren zijn. Gebruik dit als leidraad.
-
-Bouwlijst voor de Sjalay-sketch. Geen Matter, geen TSTAT, geen optionele RoomSense-sensoren, geen Flobecq-kringen/ECO.
-
-A. Platform
-
-ESP32-C6, #define Serial Serial0
-Partities 16 MB: nvs 20 KB, otadata 8 KB, app0/app1 6 MB, SPIFFS ~4 MB
-Wi-Fi STA; SSID/wachtwoord uit NVS
-Static IP uit NVS, anders DHCP (gateway = x.x.x.1)
-Wi-Fi reconnect in loop() bij verlies (4G)
-AP-fallback + captive portal als Wi-Fi faalt (ROOM-<naam> / Sjalay-Setup)
-NTP + tijdzone CET/CEST
-NVS room-config voor alle instellingen
-AsyncTCP + ESPAsyncWebServer poort 80
-OTA .bin + reboot
-Factory reset via web + serial R binnen 5 s na boot / reset_nvs
-Crash-log in NVS (largest heap-block < 25 KB), teller + wissen in settings
-Geen mDNS, geen Matter, geen serial-statusdump (alleen boot-R)
-
-
-B. Web-UI (look van de roomsketch)
-
-Gele header (naam + uptime + datum/tijd), rode sidebar, witte pagina, blauwe labels
-Sidebar: Status / OTA / JSON / Settings (geen Matter)
-/ status — groepen + tabellen + sliders/switches
-Live-refresh via JS fetch('/json') (hybrid, weinig heap)
-/settings — formulier, opslaan + reboot
-/json compacte keys (Sheets + UI)
-/update OTA + reboot-knop
-Mobiele CSS max-width: 600px
-Sensor-⚠ rood (defect) / oranje (verdacht)
-HTML chunked AsyncResponseStream + char[] i.p.v. String (heap-arm)
-CORS * op JSON (dashboard/HA later)
-
-
-C. Pinnen (RoomSense + relais)
-
-PinFunctieIO6DHT22IO3DS18B20 OneWireIO1LDR1IO5PIR MOV1IO4NeoPixel / PowerpixelsIO10Relais → WOLF E1 (uitgang, actief LOW of zoals module)IO15ongebruikt (reserve relais)IO13/11I2C ongebruikt (geen TSL, geen MCP)
-
-Relais uit in setup() vóór Wi-Fi (fail-safe: E1 open)
-Watchdog: hang → reset → relais blijft uit tot logica weer loopt
-Relais volgt heating_on (geen 10 min-override)
-
-
-D. Sensoren (alleen standaard RoomSense)
-
-DHT22: temp + vocht, dauwpunt
-DS18B20 max 4: scan/rescan, CRC, nicknames, primaire → room_temp
-Fallback: DS ongeldig (NaN / <5 / >40 °C) → DHT22; beide defect → room_temp = 0 + melding
-LDR1 0–100 (donker = 100)
-PIR MOV1: LOW = beweging, triggers/min, licht-aan-timer
-Niet: CO₂, stof, TSL2561, MOV2, beam/LDR2, TSTAT-ingang
-
-
-E. Verwarming (softwarethermostaat)
-
-Schakelaar Verwarming in de UI (persistent NVS)
-Uit = relais altijd open (zomer)
-Aan = thermostat
-
-Setpoint-slider 10–30 °C (persistent)
-Dauwpuntbeveiliging: effective = max(setpoint, dew + dew_margin)
-heating_on = (verwarming aan) && (room_temp < effective − 0.5)
-Relais IO10 volgt heating_on onmiddellijk
-Duty% live + sliding window 4 u (12 × 20 min) → JSON/Sheets
-UI toont: room temp (DS + DHT), vocht, dauwpunt, dew-alert, setpoint, verwarming aan/uit, ketelvraag (heating_on), relais
-Niet: TSTAT, Thuis/Uit, override 10 min, vent%-slider, vent-PWM, HTTP-poll van andere ESPs
-
-
-F. Powerpixels (IO4) — bestaande room-logica, zonder MOV2
-
-1–30 pixels, aantal + nicknames in NVS
-Fade-engine sin-ease, 1–10 s
-RGB-kleurkiezer (web + NVS)
-Pixel 0: AUTO = MOV1 + LDR donker, of manueel aan
-Pixel 1+: manueel aan/uit, persistent
-Licht-aan tijd 0–30 min + 5 s overtime
-Bed-modus: MOV-pixel(s) gedwongen uit
-/capabilities — pixelnamen JSON
-/setcolor, /toggle_pixel_mode, /toggle_pixel, /set_fade_duration, /set_light_on_min, /toggle_bed
-
-
-G. Google Sheets
-
-gas_url in settings (leeg = uit)
-HTTPS POST elke 5 min, payload = /json
-Compact schema (één circuit, geen SCH/ECO):
-
-H. Settings-velden
-
-Room-naam, Wi-Fi SSID/wachtwoord, static IP, MAC (read-only)
-Heating setpoint default, dew-margin
-LDR dark-threshold
-Aantal pixels, default RGB, pixelnamen
-DS18B20 nicknames, primaire sensor, rescan 1-Wire
-Google Script URL
-Crashteller + wissen
-Opslaan + reboot; factory reset-knop
-Niet: CO₂/stof/zon/MOV2/beam/TSTAT-checkboxes, ECO, circuits, vent default, serial-verbose
-
-
-I. Statuspagina-groepen
-
-HVAC — temps, vocht, dauwpunt, alarm, setpoint-slider, verwarming-switch, ketelvraag-dot, relais-dot
-Verlichting — LDR, MOV1-dot, licht-tijd, RGB, bed, dim-snelheid, pixels
-Beweging — MOV1 trig/min
-Controller — IP, RSSI, heap, largest block
-
-
-J. Wat er bewust níet in zit
-
-- Matter / HomeKit / /matter
-- TSTAT-ingang, Thuis/Uit, override 10 min
-- MCP23017, 7 kringen, rooms pollen
-- ECO-boiler, SCH/WON-pompen, 6 vaste boiler-DS
-- CO₂, stof, TSL2561, MOV2, beam
-- Ventilator-PWM IO20
-- mDNS, MQTT (later als remote-vanuit-Flobecq nodig is)
-
----
-
-## 10. SJALAY-sketch — huidige implementatie (v0.9, 27 sep 2026)
-
-Dit hoofdstuk beschrijft wat er **effectief gebouwd en werkend getest** is, als
-aanvulling op de bouwlijst (A–J) hierboven. Bij twijfel is de code in de
-sketch (`SJALAY_CONTROLLER_v0.9_...ino`) de bron van waarheid; dit is een
-leeswijzer erbij.
-
-### 10.1 Bestand en board-instellingen
-
-- Bestandsnaam bevat versie + datum, bv. `SJALAY_CONTROLLER_v0.9_27sep_pixel0fix.ino`.
-- Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB,
-  **Partition Scheme** = Custom (`partitions.csv` in dezelfde map),
-  **USB CDC On Boot** = Enabled.
-- `#define Serial Serial0` staat bovenaan — verplicht op de C6, anders werkt
-  de seriële monitor niet correct.
-- Versienummer staat in `#define SJALAY_VERSION` en verschijnt in de UI
-  (Controller-groep) en in `/json` (veld `ver`).
-
-### 10.2 Effectief gebruikte pinnen
-
-Van de volledige RoomSense-pinout (sectie 4) gebruikt de Sjalay-sketch enkel:
-
-| Pin | Functie | Opmerking |
-|-----|---------|-----------|
-| IO6 | DHT22 data | temp + vocht |
-| IO3 | DS18B20 OneWire | tot 4 sensoren op 1 bus |
-| IO1 | LDR1 analoog | 0-100 geschaald, donker = 100 |
-| IO5 | PIR MOV1 | `INPUT_PULLUP`, LOW = beweging |
-| IO4 | NeoPixel data | powerpixels, 1-30 stuks |
-| IO10 | Relais → WOLF E1 | actief-laag (`RELAY_ACTIVE_LOW`), fail-safe UIT vóór Wi-Fi |
-| IO15 | (nog) niet gebruikt | gereserveerd voor eventueel 2e relais |
-
-I²C (IO11/IO13), CO₂ (IO18), stof (IO7/IO12), LDR2 (IO2) en MOV2 (IO19)
-worden bewust niet aangesproken — zie punt J.
-
-### 10.3 Webinterface — pagina's en endpoints
-
-**Pagina's** (zichtbaar in de sidebar): `/` (Status), `/update` (OTA),
-`/settings` (Settings). `/json` staat ook in de sidebar als rechtstreekse
-link naar de ruwe data.
-
-**Actie-endpoints** (allemaal `HTTP GET`, AJAX via `submitAjax()` in de
-statuspagina, antwoorden met `text/plain "OK"` tenzij anders vermeld):
+**Pagina's:** `/` (Status), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
 
 | Endpoint | Werking |
 |---|---|
-| `/save_settings` | verwerkt het volledige Settings-formulier, herstart daarna |
+| `/save_settings` | verwerkt Settings-formulier, herstart |
 | `/factory_reset` | wist alle NVS-instellingen, herstart |
-| `/clear_crash_log` | wist de crash-teller |
-| `/rescan_ds` | herscant de DS18B20-bus, redirect naar `/settings` |
+| `/clear_crash_log` | wist crash-teller |
+| `/rescan_ds` | herscant DS18B20-bus |
 | `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming |
-| `/toggle_relay_manual` | wisselt relaisstand in handmatige modus |
+| `/toggle_relay_manual` | wisselt relaisstand (handmatige modus) |
 | `/set_setpoint?value=` | setpoint-slider (10-30 °C) |
 | `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL |
-| `/toggle_pixel?idx=` | pixel `idx` aan/uit (idx 0 = pixel 0 in MANUEEL, idx 1+ = normale pixels) |
-| `/setcolor?r=&g=&b=` | zet + bewaart de powerpixel-kleur, past onmiddellijk toe |
+| `/toggle_pixel?idx=` | pixel `idx` aan/uit |
+| `/setcolor?r=&g=&b=` | powerpixel-kleur |
 | `/set_fade_duration?value=` | dim-snelheid (1-10 s) |
-| `/set_light_on_min?value=` | licht-aan tijd na PIR-trigger (0-30 min) |
-| `/toggle_bed` | bed-modus aan/uit (dwingt pixel 0 uit, zie 10.6) |
-| `/capabilities` | JSON met pixelnamen (voor eventuele externe dashboards) |
+| `/set_light_on_min?value=` | licht-aan tijd na PIR (0-30 min) |
+| `/toggle_bed` | bed-modus (dwingt pixel 0 uit) |
+| `/capabilities` | JSON met pixelnamen |
 | `/reboot` | herstart direct |
 
-### 10.4 Settings-pagina — velden
+### 5.3 Settings-velden
 
-Eén formulier (`/save_settings`, herstart na opslaan) met:
+- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
+- **Pixel-namen:** naam + optioneel Shelly-koppeling (`ip:nickname,ip:nickname`, max 3) per pixel
+- **Sensoren (DS18B20):** nickname per sensor + keuze primaire sensor
+- Los: herscan DS18B20-bus, crash-log wissen, factory reset
 
-- **Algemeen**: room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP),
-  dauwpuntmarge, LDR donker-drempel (0-100), aantal pixels (1-30, herstart
-  nodig om echt van kleur/lengte te veranderen), Google Script-URL (leeg =
-  logging uit), MAC-adres (alleen-lezen).
-- **Pixel-namen**: 1 tekstveld per geconfigureerde pixel (pixel 0 heeft
-  "(MOV1)" als hint).
-- **Sensoren (DS18B20)**: 1 tekstveld per gevonden sensor (met huidige
-  temperatuur als referentie) + een dropdown om de **primaire sensor** te
-  kiezen (die bepaalt `room_temp` samen met de DHT22-fallback).
-- Los van dat formulier: **Herscan DS18B20-bus** (navigeert direct weg —
-  eerst opslaan als er nog wijzigingen in het formulier staan), **crash-log
-  wissen**, en **factory reset** (met bevestigingsdialoog).
+### 5.4 Verwarmingslogica
 
-### 10.5 Verwarmingslogica (samengevat)
+- **Automatisch:** `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`; relais aan als `room_temp < effective_setpoint - 0.5`
+- **Handmatig:** relais volgt rechtstreeks de `/toggle_relay_manual`-schakelaar
+- Relais wordt **onmiddellijk** aangepast bij elke wijziging
+- **Duty-cyclus:** 4-uur sliding window (12 × 20 min), zichtbaar in UI en `/json`/Sheets
 
-- Twee modi, via `/toggle_heating_auto`: **Automatisch** (softwarethermostaat)
-  of **Handmatig** (directe schakelaar, handig om te testen zonder werkende
-  sensoren).
-- Automatisch: `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`;
-  relais gaat aan als `room_temp < effective_setpoint - 0.5`.
-- Handmatig: relais volgt gewoon de `/toggle_relay_manual`-schakelaar.
-- In beide gevallen wordt het relais **onmiddellijk** aangepast bij elke
-  wijziging (geen wachttijd tot de volgende sensorcyclus).
-- **Duty-cyclus** (nieuw in v0.8): een 4-uur sliding window opgebouwd uit
-  12 blokken van 20 minuten. Elk blok registreert welk aandeel van die
-  20 minuten het relais aan stond; het duty%-veld is het gemiddelde van de
-  laatste (max 12) blokken. Zichtbaar in de UI en meegestuurd in `/json`
-  en dus ook naar Google Sheets.
+### 5.5 Powerpixels — pixel 0 en bed-modus
 
-### 10.6 Powerpixels — pixel 0 en bed-modus (belangrijk!)
+Volgorde van voorrang:
+1. **Bed-modus** aan → pixel 0 altijd uit, ongeacht modus
+2. **AUTO/MANUEEL** (enkel relevant als bed-modus uit): AUTO = aan bij beweging + donker genoeg; MANUEEL = losse schakelaar
 
-Pixel 0 is de "MOV-pixel" en heeft twee lagen logica, in deze volgorde van
-voorrang:
+Pixels 1+ zijn altijd rechtstreeks manueel, persistent, zonder bed-override.
 
-1. **Bed-modus** (schakelaar in de groep "Verlichting") — als die AAN staat,
-   is pixel 0 **altijd** uit, wat de modus (AUTO/MANUEEL) ook is. Dit is een
-   bewuste ontwerpkeuze (zie punt F: "bed-modus dwingt MOV-pixel(s) uit"),
-   bedoeld om 's nachts geen bewegingslicht te krijgen.
-2. **Modus AUTO/MANUEEL** (schakelaar bovenaan de Powerpixels-groep) —
-   enkel relevant als bed-modus UIT staat:
-   - AUTO: pixel 0 gaat aan bij beweging (PIR MOV1) **en** het is donker
-     genoeg (LDR boven de donker-drempel).
-   - MANUEEL: een aparte AAN/UIT-schakelaar verschijnt, rechtstreeks
-     bediend door de gebruiker.
+### 5.6 Google Sheets-logging
 
-**Aandachtspunt uit de praktijk:** als bed-modus per ongeluk aan blijft
-staan van een eerdere test, lijkt de MANUEEL-schakelaar van pixel 0 niet te
-werken (hij springt in de UI terug uit en de LED gaat nooit branden) — dit
-is geen bug, bed-modus wint gewoon altijd. Sinds v0.9 toont de UI dit
-expliciet met een eigen statusregel ("Bed-modus actief → geforceerd UIT")
-zodra dat het geval is, met een knop om ze direct uit te zetten.
+Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload. Laatste resultaatcode (`gcode`) zichtbaar in UI.
 
-Pixels 1 en hoger zijn altijd rechtstreeks manueel aan/uit, persistent in
-NVS, zonder bed-override.
+### 5.7 Shelly-stopcontacten per pixel
 
-### 10.7 Google Sheets-logging
+Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meeschakelen — lokaal, geen cloud. Formaat in Settings: `192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp`. Bij een effectieve aan/uit-wissel van de pixel stuurt de sketch `http://<ip>/relay/0?turn=on|off` (Gen1/2/3-compatibel), fire-and-forget met korte timeout. Geef elke Shelly een vast IP.
 
-- Ingeschakeld zodra `gas_url` (Apps Script webhook-URL) is ingevuld in
-  Settings.
-- Elke 5 minuten (niet in AP-modus) wordt de volledige `/json`-payload via
-  HTTPS POST naar die URL gestuurd (`WiFiClientSecure` met `setInsecure()`,
-  Apps Script's typische 302-redirect wordt gevolgd).
-- Laatste resultaatcode (`gcode`) en tijdstip zijn zichtbaar in de
-  "Logging"-groep op de statuspagina.
+### 5.8 Gekende aandachtspunten
 
-### 10.8 Shelly-stopcontacten per pixel (optioneel, nieuw in v0.10)
+- NVS-instellingen overleven firmware-updates (namespace `"sjalay-cfg"`); enkel factory reset wist alles
+- Zonder RoomSense-shield: sketch crasht niet, sensoren tonen gewoon NaN/0 met melding
+- Shelly-koppeling los te testen zonder sensoren (serial toont `[Shelly] ... -> HTTP ...`)
 
-Elke pixel (ook pixel 0) kan gekoppeld worden aan **0 tot 3 Shelly
-slimme stopcontacten**, die dan simultaan meeschakelen met de pixel.
-Bedoeld voor bv. een echte lamp die mee moet gaan met een powerpixel als
-indicatie, zonder dat er Matter/HomeKit/cloud bij komt kijken — alles
-verloopt lokaal over het eigen netwerk.
+### 5.9 Versiegeschiedenis (kort)
 
-**Instellen** (Settings, onder "Pixel-namen"): een extra tekstveld per
-pixel met het formaat
-```
-192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp
-```
-— `ip:nickname`-paren gescheiden door een komma, max. 3 per pixel. Leeg
-laten = geen koppeling voor die pixel. **Let op:** sinds de subnetwissel
-(zie hoofdstuk 12) horen deze IP's in het `192.168.50.x`-bereik te staan,
-niet meer `192.168.1.x` of `192.168.0.x`.
-
-**Werking:** de sketch onthoudt de vorige aan/uit-status van elke pixel
-en vergelijkt die elke lus-cyclus met de actuele status
-(`updatePixelLogic()`). Enkel bij een **effectieve wissel** (rand-detectie,
-dus niet continu) stuurt hij voor elk gekoppeld IP een korte lokale
-HTTP-GET:
-```
-http://<ip>/relay/0?turn=on
-http://<ip>/relay/0?turn=off
-```
-Dit endpoint werkt zowel op oudere (Gen1) als nieuwere (Gen2/Gen3, "Plus")
-Shelly-stopcontacten, zonder Shelly-cloud-account of app nodig. Er is
-bewust **geen retry en geen terugkoppeling** ingebouwd (fire-and-forget,
-zoals de Sheets-log) — met een korte timeout (1-1,5s connect/response) zodat
-een uitgeschakelde of onbereikbare Shelly de hoofdlus niet blokkeert.
-
-**Op de statuspagina** staat naast elke pixelnaam, indien gekoppeld, een
-kleine grijze aanduiding met de ingestelde nicknames (bv. "→ Keukenlamp,
-Tafellamp"). Dit toont enkel wát er gekoppeld is, niet de actuele
-live-status van de Shelly zelf (geen polling, om de pagina snel te houden).
-
-**Praktisch:** geef elke Shelly een **vast IP** (reservering in de router,
-of instelbaar in de Shelly-app zelf) — anders verandert het gekoppelde IP
-na een herstart van de Shelly en moet je het opnieuw instellen in Settings.
-
-### 10.9 Gekende aandachtspunten
-
-- NVS-instellingen (Wi-Fi, kleuren, pixelnamen, Shelly-koppelingen,
-  bed-modus, …) blijven behouden over firmware-updates heen (zelfde
-  `Preferences`-namespace `"sjalay-cfg"`). Enkel een **factory reset** (web
-  of seriële `R` binnen 5 s na boot) wist alles. Test dus na een update
-  altijd even de status van schakelaars zoals bed-modus, automatische
-  verwarming, enz. — die staan mogelijk nog zoals bij de vorige test.
-- Zonder RoomSense-shield aangesloten werkt de sketch nog steeds: DHT22
-  geeft NaN, DS18B20-telling is 0, dit wordt netjes gedetecteerd en getoond
-  (geen crash), met een melding in de HVAC-groep.
-- De Shelly-koppeling is volledig los te testen van de RoomSense-hardware:
-  ook zonder sensoren kan je pixels manueel aan/uit zetten in de UI en zo
-  de Shelly-HTTP-calls verifiëren (serial monitor toont `[Shelly] ... -> HTTP ...`).
-
-### 10.10 Versiegeschiedenis (kort)
-
-| Versie | Belangrijkste inhoud |
+| Versie | Inhoud |
 |---|---|
-| v0.1 – v0.1.1 | Platformlaag (Wi-Fi/AP/NTP/OTA/crash-log/factory-reset), AP-SSID-zichtbaarheidsfix |
-| v0.2 | Sensoren: DHT22, DS18B20, LDR1, PIR MOV1 |
+| v0.1–v0.1.1 | Platformlaag (Wi-Fi/AP/NTP/OTA/crash-log/factory-reset) |
+| v0.2 | Sensoren: DHT22, DS18B20, LDR1, PIR |
 | v0.3 | Verwarmingslogica + relais IO10 |
-| v0.4 | Powerpixels (fade-engine, AUTO/manueel, bed-modus) |
+| v0.4 | Powerpixels (fade, AUTO/manueel, bed-modus) |
 | v0.5 | Volledige AJAX-live-UI + compact `/json` |
-| v0.6 | UI-stijl exact zoals ROOM-sketch, heap-KB-bug gefixt |
-| v0.7 – v0.7.1 | Pixel-0 AUTO/MANUEEL-herwerking, Google Sheets-logging, compile-fix |
-| v0.8 | STAP 7: DS18B20-nicknames/primaire sensor instelbaar, LDR-drempel instelbaar, duty-cyclus 4u |
-| v0.9 | Bugfix: bed-modus/pixel-0-interactie nu expliciet zichtbaar in de UI |
-| v0.10 | STAP 8: optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud) |
+| v0.6 | UI-stijl, heap-KB-bug gefixt |
+| v0.7–v0.7.1 | Pixel-0 herwerking, Google Sheets-logging |
+| v0.8 | DS18B20-nicknames/primaire sensor, LDR-drempel instelbaar, duty-cyclus 4u |
+| v0.9 | Bugfix bed-modus/pixel-0-interactie zichtbaar in UI |
+| v0.10 | Optionele Shelly-stopcontacten per pixel |
 
 ---
 
-## 11. JSON-velden (`/json`)
+## 6. JSON-velden (`/json`)
 
-Dit is het compacte schema dat zowel de live-UI (elke 3 s via `fetch`) als
-de Google Sheets-log (elke 5 min) gebruikt. Booleans staan als JSON
-`true`/`false`, niet als 0/1 (behalve waar expliciet vermeld).
+Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min). Booleans als `true`/`false`.
 
 | Veld | Type | Beschrijving |
 |---|---|---|
-| `rid` | string | Room-naam (uit Settings) |
-| `ver` | string | Firmwareversie (bv. `"0.9"`) |
-| `ip` | string | IP-adres (of `192.168.4.1` in AP-modus) |
-| `rssi` | int | Wi-Fi signaalsterkte in dBm (0 in AP-modus) |
-| `heap` | uint | Vrije heap in KB |
-| `lb` | uint | Grootste vrije geheugenblok in KB (indicator voor fragmentatie) |
-| `crash` | uint | Aantal geregistreerde crashes (lage-heap-events) |
-| `upt` | ulong | Uptime in seconden sinds boot |
-| `ap` | bool | `true` = toestel zit in AP/setup-modus |
-| `t2` | float | DHT22-temperatuur in °C (0 als sensor defect/ontbreekt) |
-| `t2ok` | bool | DHT22-meting geldig? |
-| `h` | float | DHT22-relatieve vochtigheid in % |
-| `dp` | float | Berekend dauwpunt in °C (uit DHT22) |
-| `t1` | float | DS18B20 primaire-sensor-temperatuur in °C |
-| `dsok` | bool | Minstens 1 DS18B20 gevonden? |
-| `dsc` | int | Aantal gevonden DS18B20-sensoren (max 4) |
-| `rt` | float | `room_temp` — effectief gebruikte kamertemperatuur (DS18B20 primair, fallback DHT22, anders 0) |
-| `tm` | string | Waarschuwingstekst bij sensorfout (leeg = alles ok) |
-| `ldr` | int | LDR1-lichtwaarde, geschaald 0-100 (100 = donker) |
-| `mov` | int | Aantal PIR MOV1-triggers in de laatste minuut |
-| `hauto` | bool | Verwarming in automatische modus (softwarethermostaat)? |
-| `hsp` | int | Ingestelde setpoint-temperatuur in °C (10-30) |
-| `heff` | float | Effectieve setpoint in °C (incl. dauwpuntmarge indien van toepassing) |
-| `rman` | bool | Gewenste relaisstand in handmatige modus |
-| `hon` | bool | Huidige ketelvraag / relaisstand (`heating_on`) |
-| `duty` | float | Duty-cyclus verwarming over de laatste 4 uur, in % |
-| `bed` | bool | Bed-modus actief? (dwingt pixel 0 uit) |
-| `p0m` | int | Pixel-0-modus: `0` = AUTO, `1` = MANUEEL |
-| `p0on` | bool | Gewenste pixel-0-staat in MANUEEL (los van of bed-modus dat overschrijft) |
-| `pn` | int | Aantal geconfigureerde pixels |
-| `fd` | int | Dim/fade-snelheid in seconden (1-10) |
-| `lom` | int | Licht-aan-tijd in minuten (0-30) na een PIR-trigger |
-| `pon` | string | Bitstring (lengte = `pn`) met actuele aan/uit-status per pixel; teken op index *i* = pixel *i* (`'1'`=aan, `'0'`=uit) |
-| `nr`, `ng`, `nb` | int | Huidige RGB-kleurwaarde (0-255) van de powerpixels |
-| `gas` | bool | Google Sheets-logging ingeschakeld (URL niet leeg)? |
-| `gcode` | int | Laatste HTTP-resultaatcode van de Sheets-POST (0 = nog niet geprobeerd) |
+| `rid` | string | Room-naam |
+| `ver` | string | Firmwareversie |
+| `ip` | string | IP-adres |
+| `rssi` | int | Wi-Fi signaal (dBm) |
+| `heap` | uint | Vrije heap (KB) |
+| `lb` | uint | Grootste vrije geheugenblok (KB) |
+| `crash` | uint | Aantal geregistreerde crashes |
+| `upt` | ulong | Uptime (s) |
+| `ap` | bool | AP/setup-modus? |
+| `t2`/`t2ok` | float/bool | DHT22-temp + geldigheid |
+| `h` | float | DHT22-vochtigheid (%) |
+| `dp` | float | Dauwpunt (°C) |
+| `t1` | float | DS18B20 primaire temp |
+| `dsok`/`dsc` | bool/int | DS18B20 gevonden? / aantal |
+| `rt` | float | Effectieve room_temp |
+| `tm` | string | Sensor-waarschuwing |
+| `ldr` | int | Lichtwaarde 0-100 (100=donker) |
+| `mov` | int | PIR-triggers laatste minuut |
+| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint |
+| `rman`/`hon` | bool/bool | Handmatige relaisstand / ketelvraag actief |
+| `duty` | float | Duty-cyclus verwarming 4u (%) |
+| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat |
+| `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd |
+| `pon` | string | Bitstring aan/uit-status per pixel |
+| `nr`/`ng`/`nb` | int | Huidige RGB-kleur |
+| `gas`/`gcode` | bool/int | Sheets-logging aan? / laatste HTTP-code |
 
 ---
 
-## 12. Externe toegang via Raspberry Pi + Tailscale (28 sep 2026)
+## 7. Openstaande punten
 
-Naast de ESP32-C6-controller zelf staat er in Recht ook een **Raspberry Pi
-3B+** (uit 2017) die als **Tailscale subnet router** dient, zodat het hele
-lokale Sjalay-netwerk (niet enkel de Pi zelf) ook van buitenaf (mobiele
-data, elders wifi) bereikbaar is — zonder poort-forwarding of vaste
-internet-IP nodig te hebben.
-
-### 12.1 Hardware & OS
-
-- Raspberry Pi 3B+, gevoed via 5V/2.1A USB-adapter.
-- Raspberry Pi OS (64-bit), gebaseerd op **Debian 13 "Trixie"**, geflashed
-  via **Raspberry Pi Imager** (versie 2.0.11.1) vanaf een Macbook Air.
-- Bij het flashen via Imager's **"EDIT SETTINGS"** (verschijnt na "Next" bij
-  OS/Storage-keuze, geen tandwiel-icoon meer in deze versie):
-  - **GENERAL-tab**: hostname, gebruikersnaam (`pi`), wachtwoord, Wi-Fi
-    SSID/wachtwoord, Wireless LAN country = BE.
-  - **SERVICES-tab**: SSH inschakelen met wachtwoord-authenticatie
-    (verplicht sinds Debian 11 — er is geen standaard `pi`/`raspberry`
-    account meer als dit niet expliciet ingesteld wordt). "Enable
-    Raspberry Pi Connect" is **niet** gebruikt (aparte cloud-dienst van de
-    Raspberry Pi Foundation, vereist een account, geeft enkel toegang tot
-    de Pi zelf — niet tot de rest van het netwerk zoals Tailscale wel
-    doet).
-- **Belangrijk:** wachtwoord in Imager steeds **manueel intypen**, nooit
-  leeg laten (blokkeert password-login) en oppassen bij plakken (soms wordt
-  een teken gemist bij de eerste paste-poging in een `password:`-prompt —
-  gewoon herhalen indien "Permission denied").
-- Hostname ingesteld op **`fidel`** → bereikbaar via `fidel.local` (mDNS),
-  onafhankelijk van het IP-adres/subnet.
-- SSH-login: `ssh pi@fidel.local` (of rechtstreeks IP). Wachtwoord is het
-  in Imager ingestelde wachtwoord — **nog te wijzigen** naar iets unieks
-  (`passwd` op de Pi), de router/Pi toont bij elke login een waarschuwing
-  zolang dat niet gebeurd is.
-
-### 12.2 Tailscale-installatie
-
-```
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up --advertise-routes=192.168.50.0/24 --accept-dns=false
-```
-
-- `--accept-dns=false` voorkomt dat Tailscale de lokale DNS-instellingen
-  van de Pi overschrijft (nodig om lokaal met de Sjalay-toestellen te
-  blijven werken).
-- Na `tailscale up` moet de geadverteerde route ook **manueel goedgekeurd**
-  worden in de Tailscale-adminconsole
-  (https://login.tailscale.com/admin/machines → machine `rpi-fidel-sjalay`
-  → **⋯** → **Edit route settings** → subnet aanvinken). Zonder die
-  goedkeuring routeert Tailscale het subnet niet door, ook al adverteert
-  de Pi het wel.
-- Machine-naam in de tailnet: **`rpi-fidel-sjalay`**. Er draait in
-  Zarlardinge (thuis) ook al een andere Tailscale-subnet-router,
-  **`rpi-raspberrypi-zarlar`** (met "Funnel" ingeschakeld voor een
-  publiek-bereikbare dienst — losstaand van dit Sjalay-netwerk).
-
-### 12.3 Subnet-conflict Sjalay ↔ thuisnetwerk — opgelost door hernummering
-
-Zowel het thuisnetwerk in Zarlardinge als het oorspronkelijke Sjalay-netwerk
-in Recht gebruikten **beide** het gangbare standaard-subnet
-`192.168.1.0/24`. Tailscale routeert per subnet/CIDR-blok, niet per
-individueel IP — twee subnet-routers die exact hetzelfde bereik
-adverteren, geven een conflict (onvoorspelbaar welke van de twee bereikt
-wordt), ongeacht of de gebruikte host-adressen laag of hoog zijn.
-
-**Oplossing:** het Sjalay-netwerk in Recht is hernummerd naar
-**`192.168.50.0/24`** (zie tabel in hoofdstuk 2) via de LAN-instellingen
-van de TP-Link Archer MR600 (`Network → LAN Settings → DHCP Server`). Denk
-er bij zo'n TP-Link-wijziging aan dat **drie velden consistent** hetzelfde
-derde octet moeten hebben: het **IP Address**-veld bovenaan (= het eigen
-LAN-adres van de router, bepaalt het echte subnet), de **IP Address Pool**,
-en de **Default Gateway** — anders geeft de router een
-"invalid configuration"-fout.
-
-Gevolg van deze hernummering: elk toestel met een **vast/statisch**
-IP-adres in het oude `192.168.1.x`-bereik (zoals de ESP32-C6, initieel op
-`.1.10`) werd tijdelijk onbereikbaar tot het static-IP-veld herzien werd
-(via `/settings` op de Sjalay-webinterface, of via factory-reset +
-herconfiguratie). Toestellen op **DHCP** (zoals de Pi) kregen gewoon
-automatisch een nieuw adres in de nieuwe pool en waren, via hun
-`.local`-hostnaam, zonder verdere actie weer bereikbaar.
-
-### 12.4 Resultaat
-
-Bevestigd werkend (28 sep 2026): een Sjalay-webinterface (`http://192.168.50.x`)
-is bereikbaar vanaf een iPhone met **wifi uitgeschakeld** (enkel mobiele
-data), via de Tailscale-app + de subnet-route — zonder VPN-instellingen,
-poort-forwarding of publiek IP-adres nodig te hebben op de 4G-router in
-Recht.
-
-### 12.5 Nog te doen
-
-- [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd`, ipv het
-      Imager-standaardwachtwoord).
-- [ ] Shelly-stopcontacten (aankomst 29 sep) een vast IP geven in het
-      nieuwe `192.168.50.x`-bereik (bv. `.11`–`.14`) en koppelen aan de
-      juiste pixels via `/settings` (zie 10.8).
-- [ ] Optioneel: SSH-sleutel-authenticatie i.p.v. wachtwoord, voor extra
-      veiligheid nu de Pi ook van buitenaf (via Tailscale) bereikbaar is.
+- [ ] E1 fysiek lokaliseren op de ketel + HG13 bevestigen op 1 (waarschijnlijk al correct — fabrieksinstelling)
+- [ ] **Vorstbeveiliging bij E1-open verifiëren** (installateur of Montageanleitung ketel) — kritiek voor een onbewoonde winterperiode
+- [ ] Relais-test met ESP32 (IO10) op de echte E1-klemmen
+- [ ] Definitieve montage (behuizing in de kelder)
+- [ ] Shelly-stopcontacten vast IP geven in `192.168.50.x` en koppelen via `/settings`
+- [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
