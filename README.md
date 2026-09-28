@@ -39,6 +39,12 @@ Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wo
 - *Fernschaltkontakt op de BM-wandsokkel* (klemmen 3-4, potentiaalvrij) — functioneel gelijkaardig, maar stuurt altijd CV **en** SWW samen, niet apart regelbaar. Bewaard als alternatief/backup-aansluitpunt indien nodig, makkelijker bereikbaar (living i.p.v. ketelruimte).
 - *HG13 = 5–11* — specifieke technische functies (rookgasklep, circulatie, brandersperring, externe brandervraag, retourvoeler), niet geschikt als eenvoudige aan/uit-schakelaar.
 
+**⚡ Bestaande brug over E1 — eerst verwijderen!**
+
+Op het elektrisch schema staat een fabrieks-/installateursbrug (kortsluitdraadje) over de E1-klemmen. Dat is normaal en logisch: zolang er geen extern toestel op E1 aangesloten is, moet de ketel toch gewoon kunnen verwarmen — de brug simuleert een permanent "gesloten contact", wat bij HG13=1 de normale "verwarming toegelaten"-toestand is.
+
+**Belangrijk:** die brug moet **verwijderd** worden vóór je het relais aansluit. Het relais **parallel** naast de bestaande brug zetten werkt niet — een gesloten brug + eender welk relais ernaast blijft altijd "gesloten", en je Sjalay-sturing zou dan genegeerd worden. Knip/verwijder de brug en sluit in de plaats daarvan de twee relaisdraden aan op diezelfde twee E1-klemmen: het relais neemt dan volledig de rol van de brug over (gesloten = zoals de brug was = verwarming toegelaten; open = geblokkeerd).
+
 **Veiligheid — nooit vergeten:**
 - Nooit veiligheidscontacten (STB, maximumthermostaat, druk…) overbruggen
 - Galvanische scheiding via relais (optocoupler of degelijk relais)
@@ -251,6 +257,7 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 ## 7. Openstaande punten
 
 - [ ] E1 fysiek lokaliseren op de ketel + HG13 bevestigen op 1 (waarschijnlijk al correct — fabrieksinstelling)
+- [ ] **Bestaande brug over E1 verwijderen** vóór het relais aan te sluiten (zie 1.2)
 - [ ] **Vorstbeveiliging bij E1-open verifiëren** (installateur of Montageanleitung ketel) — kritiek voor een onbewoonde winterperiode
 - [ ] Relais-test met ESP32 (IO10) op de echte E1-klemmen
 - [ ] Definitieve montage (behuizing in de kelder)
