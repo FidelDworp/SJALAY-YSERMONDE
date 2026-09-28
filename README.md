@@ -38,6 +38,15 @@ Huidige oplossing:
 
 **Status:** Router is gekocht (Tweedekans Coolblue ± €110), geïnstalleerd en werkt perfect.
 
+**LAN-instellingen (gewijzigd 28 sep 2026 — zie hoofdstuk 12 voor de reden):**
+
+| | Waarde |
+|---|---|
+| Subnet | **192.168.50.0/24** (was 192.168.1.0/24) |
+| Gateway / routerbeheer | `192.168.50.1` (via TP-Link webinterface) |
+| DHCP-pool | `192.168.50.100` – `192.168.50.199` |
+| Vaste IP's (buiten DHCP-pool, handmatig toe te wijzen) | `192.168.50.2` – `192.168.50.99`, bv. ESP32-C6 op `.10`, Shelly-stopcontacten op `.11`–`.14` |
+
 Oude iPhone 5 (opgeblazen batterij) → later inleveren bij Krëfel Geraardsbergen (Astridlaan 40).
 
 ---
@@ -59,15 +68,15 @@ De BM 2744329 communiceert via **eBUS**. E1 werkt onafhankelijk/parallel van de 
 ### 3.2 Waar vind ik het E1-contact?
 1. Open de regelaar / bedieningspaneel van de ketel (meestal vooraan of zijkant).
 2. Zoek de klemmenstrook of stekkerlijst.
-3. Zoek de klemmen die gemarkeerd zijn als **E1** (soms “Eingang E1” of “parametreerbare ingang”).
+3. Zoek de klemmen die gemarkeerd zijn als **E1** (soms "Eingang E1" of "parametreerbare ingang").
 4. Het is een 2-polige aansluiting (potentiaalvrij).  
-   Maak **duidelijke foto’s** van de hele klemmenstrook voordat je iets losmaakt.
+   Maak **duidelijke foto's** van de hele klemmenstrook voordat je iets losmaakt.
 
 ### 3.3 Hoe parameters (HG13) bekijken en wijzigen?
 1. Ga naar de **BM 2744329** bedieningsmodule (muurthermostaat).
 2. Ga naar het **installateurs-/vakmanniveau**.  
    Meestal door een code in te voeren (vaak **1111** of vergelijkbaar – zie handleiding BM of probeer standaard WOLF-codes).
-3. Zoek parameter **HG13** (of “Eingang E1” / “Functie E1”).
+3. Zoek parameter **HG13** (of "Eingang E1" / "Functie E1").
 4. Noteer de huidige waarde.
 5. Wijzig indien nodig naar de gewenste functie (RT, WW of RT/WW).
 6. Sla op en verlaat het installateursniveau.
@@ -108,7 +117,7 @@ Dit shield heeft twee RJ45-aansluitingen:
 | IO13         | I2C SDA (Pull-up 4.7k → 5V)                     | Sensoren |
 | IO11         | I2C SCL (Pull-up 4.7k → 5V)                     | Sensoren |
 | IO3          | DS18B20 OneWire                                 | Temperatuursensor |
-| IO4          | Pixels data                                     | Status-LED’s |
+| IO4          | Pixels data                                     | Status-LED's |
 | IO5          | MOV1 PIR                                        | Beweging |
 | IO6          | DHT22 data                                      | Temp/vocht |
 | IO12         | Sharp dust LED out                              | Stofsensor |
@@ -157,7 +166,7 @@ IO10 is ontworpen voor thermostat-schakeling en is daardoor de meest logische ke
 - [ ] Laptop/telefoon met serial monitor / ESPHome
 - [ ] Korte 2-aderige kabel (0,5–0,75 mm²) voor E1
 - [ ] Isolatietape / krimpkous
-- [ ] Foto’s van klemmenstrook (E1)
+- [ ] Foto's van klemmenstrook (E1)
 
 ### Optioneel
 - [ ] Temperatuursensor (DS18B20 of BME280)
@@ -169,7 +178,7 @@ IO10 is ontworpen voor thermostat-schakeling en is daardoor de meest logische ke
 
 1. **Op Sjalay – verkenning**
    - Typeplaatjes controleren (al gedaan)
-   - Ketel openen → **E1-klemmen lokaliseren** + foto’s
+   - Ketel openen → **E1-klemmen lokaliseren** + foto's
    - Op de BM → installateursniveau → **HG13** uitlezen
    - Beslissen: RT, WW of RT/WW
 
@@ -212,7 +221,7 @@ IO10 is ontworpen voor thermostat-schakeling en is daardoor de meest logische ke
 ---
 
 **Veiligheid eerst.**  
-Bij twijfel over de aansluiting: foto’s maken en eerst raadplegen voordat er permanent wordt aangesloten.
+Bij twijfel over de aansluiting: foto's maken en eerst raadplegen voordat er permanent wordt aangesloten.
 
 Dit document is bedoeld als overnamedossier voor de repository.
 
@@ -493,10 +502,12 @@ verloopt lokaal over het eigen netwerk.
 **Instellen** (Settings, onder "Pixel-namen"): een extra tekstveld per
 pixel met het formaat
 ```
-192.168.0.50:Keukenlamp,192.168.0.51:Tafellamp
+192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp
 ```
 — `ip:nickname`-paren gescheiden door een komma, max. 3 per pixel. Leeg
-laten = geen koppeling voor die pixel.
+laten = geen koppeling voor die pixel. **Let op:** sinds de subnetwissel
+(zie hoofdstuk 12) horen deze IP's in het `192.168.50.x`-bereik te staan,
+niet meer `192.168.1.x` of `192.168.0.x`.
 
 **Werking:** de sketch onthoudt de vorige aan/uit-status van elke pixel
 en vergelijkt die elke lus-cyclus met de actuele status
@@ -598,3 +609,105 @@ de Google Sheets-log (elke 5 min) gebruikt. Booleans staan als JSON
 | `nr`, `ng`, `nb` | int | Huidige RGB-kleurwaarde (0-255) van de powerpixels |
 | `gas` | bool | Google Sheets-logging ingeschakeld (URL niet leeg)? |
 | `gcode` | int | Laatste HTTP-resultaatcode van de Sheets-POST (0 = nog niet geprobeerd) |
+
+---
+
+## 12. Externe toegang via Raspberry Pi + Tailscale (28 sep 2026)
+
+Naast de ESP32-C6-controller zelf staat er in Recht ook een **Raspberry Pi
+3B+** (uit 2017) die als **Tailscale subnet router** dient, zodat het hele
+lokale Sjalay-netwerk (niet enkel de Pi zelf) ook van buitenaf (mobiele
+data, elders wifi) bereikbaar is — zonder poort-forwarding of vaste
+internet-IP nodig te hebben.
+
+### 12.1 Hardware & OS
+
+- Raspberry Pi 3B+, gevoed via 5V/2.1A USB-adapter.
+- Raspberry Pi OS (64-bit), gebaseerd op **Debian 13 "Trixie"**, geflashed
+  via **Raspberry Pi Imager** (versie 2.0.11.1) vanaf een Macbook Air.
+- Bij het flashen via Imager's **"EDIT SETTINGS"** (verschijnt na "Next" bij
+  OS/Storage-keuze, geen tandwiel-icoon meer in deze versie):
+  - **GENERAL-tab**: hostname, gebruikersnaam (`pi`), wachtwoord, Wi-Fi
+    SSID/wachtwoord, Wireless LAN country = BE.
+  - **SERVICES-tab**: SSH inschakelen met wachtwoord-authenticatie
+    (verplicht sinds Debian 11 — er is geen standaard `pi`/`raspberry`
+    account meer als dit niet expliciet ingesteld wordt). "Enable
+    Raspberry Pi Connect" is **niet** gebruikt (aparte cloud-dienst van de
+    Raspberry Pi Foundation, vereist een account, geeft enkel toegang tot
+    de Pi zelf — niet tot de rest van het netwerk zoals Tailscale wel
+    doet).
+- **Belangrijk:** wachtwoord in Imager steeds **manueel intypen**, nooit
+  leeg laten (blokkeert password-login) en oppassen bij plakken (soms wordt
+  een teken gemist bij de eerste paste-poging in een `password:`-prompt —
+  gewoon herhalen indien "Permission denied").
+- Hostname ingesteld op **`fidel`** → bereikbaar via `fidel.local` (mDNS),
+  onafhankelijk van het IP-adres/subnet.
+- SSH-login: `ssh pi@fidel.local` (of rechtstreeks IP). Wachtwoord is het
+  in Imager ingestelde wachtwoord — **nog te wijzigen** naar iets unieks
+  (`passwd` op de Pi), de router/Pi toont bij elke login een waarschuwing
+  zolang dat niet gebeurd is.
+
+### 12.2 Tailscale-installatie
+
+```
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --advertise-routes=192.168.50.0/24 --accept-dns=false
+```
+
+- `--accept-dns=false` voorkomt dat Tailscale de lokale DNS-instellingen
+  van de Pi overschrijft (nodig om lokaal met de Sjalay-toestellen te
+  blijven werken).
+- Na `tailscale up` moet de geadverteerde route ook **manueel goedgekeurd**
+  worden in de Tailscale-adminconsole
+  (https://login.tailscale.com/admin/machines → machine `rpi-fidel-sjalay`
+  → **⋯** → **Edit route settings** → subnet aanvinken). Zonder die
+  goedkeuring routeert Tailscale het subnet niet door, ook al adverteert
+  de Pi het wel.
+- Machine-naam in de tailnet: **`rpi-fidel-sjalay`**. Er draait in
+  Zarlardinge (thuis) ook al een andere Tailscale-subnet-router,
+  **`rpi-raspberrypi-zarlar`** (met "Funnel" ingeschakeld voor een
+  publiek-bereikbare dienst — losstaand van dit Sjalay-netwerk).
+
+### 12.3 Subnet-conflict Sjalay ↔ thuisnetwerk — opgelost door hernummering
+
+Zowel het thuisnetwerk in Zarlardinge als het oorspronkelijke Sjalay-netwerk
+in Recht gebruikten **beide** het gangbare standaard-subnet
+`192.168.1.0/24`. Tailscale routeert per subnet/CIDR-blok, niet per
+individueel IP — twee subnet-routers die exact hetzelfde bereik
+adverteren, geven een conflict (onvoorspelbaar welke van de twee bereikt
+wordt), ongeacht of de gebruikte host-adressen laag of hoog zijn.
+
+**Oplossing:** het Sjalay-netwerk in Recht is hernummerd naar
+**`192.168.50.0/24`** (zie tabel in hoofdstuk 2) via de LAN-instellingen
+van de TP-Link Archer MR600 (`Network → LAN Settings → DHCP Server`). Denk
+er bij zo'n TP-Link-wijziging aan dat **drie velden consistent** hetzelfde
+derde octet moeten hebben: het **IP Address**-veld bovenaan (= het eigen
+LAN-adres van de router, bepaalt het echte subnet), de **IP Address Pool**,
+en de **Default Gateway** — anders geeft de router een
+"invalid configuration"-fout.
+
+Gevolg van deze hernummering: elk toestel met een **vast/statisch**
+IP-adres in het oude `192.168.1.x`-bereik (zoals de ESP32-C6, initieel op
+`.1.10`) werd tijdelijk onbereikbaar tot het static-IP-veld herzien werd
+(via `/settings` op de Sjalay-webinterface, of via factory-reset +
+herconfiguratie). Toestellen op **DHCP** (zoals de Pi) kregen gewoon
+automatisch een nieuw adres in de nieuwe pool en waren, via hun
+`.local`-hostnaam, zonder verdere actie weer bereikbaar.
+
+### 12.4 Resultaat
+
+Bevestigd werkend (28 sep 2026): een Sjalay-webinterface (`http://192.168.50.x`)
+is bereikbaar vanaf een iPhone met **wifi uitgeschakeld** (enkel mobiele
+data), via de Tailscale-app + de subnet-route — zonder VPN-instellingen,
+poort-forwarding of publiek IP-adres nodig te hebben op de 4G-router in
+Recht.
+
+### 12.5 Nog te doen
+
+- [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd`, ipv het
+      Imager-standaardwachtwoord).
+- [ ] Shelly-stopcontacten (aankomst 29 sep) een vast IP geven in het
+      nieuwe `192.168.50.x`-bereik (bv. `.11`–`.14`) en koppelen aan de
+      juiste pixels via `/settings` (zie 10.8).
+- [ ] Optioneel: SSH-sleutel-authenticatie i.p.v. wachtwoord, voor extra
+      veiligheid nu de Pi ook van buitenaf (via Tailscale) bereikbaar is.
