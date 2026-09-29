@@ -146,9 +146,9 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.12, 29 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.13, 29 sep 2026)
 
-Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.12) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.13) de bron van waarheid; dit is een leeswijzer erbij.
 
 ### 5.1 Bestand en board-instellingen
 
@@ -158,7 +158,7 @@ Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJ
 
 ### 5.2 Webinterface — pagina's en endpoints
 
-**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
+**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
 
 | Endpoint | Werking |
 |---|---|
@@ -239,7 +239,8 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.9 | Bugfix bed-modus/pixel-0-interactie zichtbaar in UI |
 | v0.10 | Optionele Shelly-stopcontacten per pixel |
 | v0.11 | SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese voor beide circuits; twee veiligheidslagen altijd actief; alle DS18B20's zichtbaar; sensor pas "ontbrekend" na 3 mislukte lezingen |
-| **v0.12** | **Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar, geen overbodige sectie-iconen naast de al grote kaart-iconen. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina** |
+| v0.12 | Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel eronder met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina |
+| **v0.13** | **Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) nu samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; de overbodige sectie-iconen boven de verwarmings-/SWW-kaart zijn weg (dubbelop met het kaart-icoon), en het lampje-icoon boven de lichten-tegels is verwijderd (dubbelop met de lampjes op de tegels zelf)** |
 
 ### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
@@ -265,16 +266,16 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 
 Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
-### 5.11 Eenvoudige landingspagina (nieuw in v0.12)
+### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13)
 
 **Aanleiding:** gasten/huurders hebben niets aan Auto/Handmatig-schakelaars, hysterese-instellingen of sensordiagnostiek — enkel licht aan/uit + kleur, en een comfortabele temperatuur voor verwarming/warm water, met zo weinig mogelijk tekst en iconen.
 
 - **`/`** is nu deze landingspagina (`handleLanding()`); de vroegere Status-pagina verhuisde **ongewijzigd** naar **`/advanced`** (`handleStatus()`, enkel het pad veranderde). Bereikbaar vanop de landingspagina via een klein tandwiel-icoon ⚙️ onderaan, zonder tekst.
-- **Verlichting:** grote tegels in een grid, één per pixel (inclusief pixel 0/MOV1) — icoon 💡, tegelkleur = de ingestelde RGB-kleur wanneer aan, grijs/wit wanneer uit, pixelnaam eronder. Aanraken = direct schakelen (`/toggle_pixel`). Eén kleurkiezer onder het grid voor de gedeelde RGB-kleur van alle pixels (`/setcolor`).
+- **Verlichting:** grote tegels in een grid, één per pixel (inclusief pixel 0/MOV1) — tegelkleur = de ingestelde RGB-kleur wanneer aan, grijs/wit wanneer uit, pixelnaam eronder (geen apart lampje-icoon boven het grid meer sinds v0.13 — dat stond dubbelop met de lampjes op de tegels zelf). Aanraken = direct schakelen (`/toggle_pixel`). Eén kleurkiezer onder het grid voor de gedeelde RGB-kleur van alle pixels (`/setcolor`).
   - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen.
-- **Verwarming/SWW:** elke kaart heeft één eigen icoon (🔥/🚿, met een klein statuslampje ernaast voor ketelvraag/pomp actief) — géén los sectie-icoon ernaast meer, dat was dubbelop met het al grote kaart-icoon. Daaronder: een **groot cijfer = de huidige, gemeten temperatuur** (`room_temp`/`temp_boiler` — de "IST"-waarde waar een gast eerst naar kijkt), een **kleine "→ X°"-regel eronder = de effectieve/gevraagde doeltemperatuur** ("SOLL": `effective_setpoint` voor verwarming, `boiler_setpoint` voor SWW — voor SWW momenteel gelijk aan de setpoint, geen aparte correctie zoals bij verwarming), en de setpoint-schuifregelaar. Bij een onbetrouwbare sensor toont het grote cijfer "n.v.t." i.p.v. een onzinnige waarde. Géén Auto/Handmatig-schakelaar, géén los relais zichtbaar.
+- **Verwarming/SWW:** elke kaart heeft één eigen icoon (🔥/🚿, met een klein statuslampje ernaast voor ketelvraag/pomp actief) — geen los sectie-icoon ernaast (dubbelop met het kaart-icoon). Daaronder, sinds v0.13 op **één lijn** in de kaartkleur (oranje voor verwarming, blauw voor SWW): eerst groot de **huidige, gemeten temperatuur** (`room_temp`/`temp_boiler` — "IST", waar een gast eerst naar kijkt), gevolgd door de **effectieve/gevraagde doeltemperatuur** kleiner tussen haakjes ("SOLL": `effective_setpoint` voor verwarming, `boiler_setpoint` voor SWW), bv. `21.3° (→ 21°)`. Bij een onbetrouwbare sensor toont het IST-cijfer "n.v.t." i.p.v. een onzinnige waarde. Daaronder de setpoint-schuifregelaar. Géén Auto/Handmatig-schakelaar, géén los relais zichtbaar.
 - **Veiligheid:** bij **elke** keer dat `/` geladen wordt, worden beide regelkringen geforceerd naar Auto gezet — ook als iemand ze op `/advanced` bewust op Handmatig had gezet. NVS wordt enkel effectief beschreven bij een échte wissel (niet bij elke herlaad/refresh), om onnodige flash-writes te vermijden.
-- Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` de kleine SOLL-regel.
+- Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` het kleine SOLL-stuk tussen haakjes.
 - 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
 
 ---
@@ -303,14 +304,14 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 | `tm` | string | Sensor-waarschuwing (kamer) |
 | `ldr` | int | Lichtwaarde 0-100 (100=donker) |
 | `mov` | int | PIR-triggers laatste minuut |
-| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint — `heff` voedt de kleine SOLL-regel op de landingspagina |
+| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint — `heff` voedt het kleine SOLL-stuk (tussen haakjes) op de landingspagina |
 | `rman`/`hon` | bool/bool | Handmatige relais-1-stand / ketelvraag actief |
 | `duty` | float | Duty-cyclus verwarming 4u (%) |
 | `hcv` | float | Hysteresisband verwarming (°C) |
 | `dsb` | int | Index van de boilersensor (-1 = geen) |
 | `bt`/`btok` | float/bool | Boilertemperatuur + betrouwbaarheid — `bt` voedt het grote IST-cijfer op de landingspagina |
 | `btm` | string | SWW-sensor-waarschuwing |
-| `swauto`/`bsp` | bool/int | SWW auto? / boiler-setpoint — `bsp` voedt de kleine SOLL-regel op de landingspagina |
+| `swauto`/`bsp` | bool/int | SWW auto? / boiler-setpoint — `bsp` voedt het kleine SOLL-stuk (tussen haakjes) op de landingspagina |
 | `sw2man`/`swon` | bool/bool | Handmatige relais-2-stand / pomp actief |
 | `hsww` | float | Hysteresisband SWW (°C) |
 | `dsl` | array | Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
@@ -339,6 +340,6 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [ ] Definitieve montage (behuizing in de kelder)
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
 - [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
-- [x] Landingspagina bijgeschaafd op feedback: overbodige sectie-iconen weg, huidige (IST) temperatuur nu groot zichtbaar naast de setpoint (29/09)
+- [x] **Sketch v0.13 gebouwd:** IST+SOLL samen op één lijn in kaartkleur, overbodige lampje-/sectie-iconen weg (29/09)
 - [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel verder bijstellen
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
