@@ -147,9 +147,9 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.14, 29 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.15, 29 sep 2026)
 
-Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.14) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.15) de bron van waarheid; dit is een leeswijzer erbij.
 
 ### 5.1 Bestand en board-instellingen
 
@@ -245,6 +245,7 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.12 | Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel eronder met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina |
 | v0.13 | Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; overbodige sectie-iconen boven de verwarmings-/SWW-kaart en het lampje-icoon boven de lichten-tegels verwijderd (dubbelop met de kaart-/tegel-iconen zelf) |
 | **v0.14** | **mDNS/Bonjour toegevoegd (`<ESPmDNS.h>`) — de controller is voortaan ook bereikbaar via `http://<naam>.local/` i.p.v. enkel het kale IP-adres. Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"), enkel a-z/0-9/streepjes toegelaten (ongeldige invoer wordt automatisch opgeschoond, terugval "sjalay" bij een lege/volledig ongeldige naam). Start na een geslaagde Wi-Fi-verbinding (niet in AP-setup-modus); een nieuwe naam vereist een herstart, net als de andere Settings-velden. Zichtbaar op `/advanced` (naast IP-adres) en in `/json` ("mdns")** |
+| **v0.15** | **Bed-modus/nachtmodus toegevoegd aan de landingspagina: nieuwe ronde knop (🛏️), even groot als de kleurkiezer (52px) en er links naast geplaatst. Voorkomt dat pixel 0 (beweging/schemer) 's nachts automatisch aangaat. Hergebruikt volledig de bestaande bed-variabele/NVS-veld en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9) — geen nieuwe backend-logica. Pixel 0 wordt tijdens bed-modus getoond als vergrendelde tegel (maan-icoon, gedimd, geen tik-actie); de bed-knop licht op zolang bed-modus actief is. Sync via het bestaande `/json`-veld `"bed"`** |
 
 ### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
@@ -270,7 +271,7 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 
 Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
-### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13)
+### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13, bed-modus toegevoegd in v0.15)
 
 **Aanleiding:** gasten/huurders hebben niets aan Auto/Handmatig-schakelaars, hysterese-instellingen of sensordiagnostiek — enkel licht aan/uit + kleur, en een comfortabele temperatuur voor verwarming/warm water, met zo weinig mogelijk tekst en iconen.
 
@@ -281,6 +282,7 @@ Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijve
 - **Veiligheid:** bij **elke** keer dat `/` geladen wordt, worden beide regelkringen geforceerd naar Auto gezet — ook als iemand ze op `/advanced` bewust op Handmatig had gezet. NVS wordt enkel effectief beschreven bij een échte wissel (niet bij elke herlaad/refresh), om onnodige flash-writes te vermijden.
 - Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` het kleine SOLL-stuk tussen haakjes.
 - 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
+- **Bed-modus/nachtmodus (nieuw in v0.15):** een ronde knop (🛏️, `&#128719;`), exact even groot als de kleurkiezer (52px) en er onmiddellijk **links** naast geplaatst, onder het lichten-grid. Voorkomt dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts automatisch aangaat — handig als gasten in die kamer slapen. Hergebruikt volledig de bestaande `bed`-variabele/NVS-instelling en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9, voordien enkel bereikbaar via `/advanced`); er is geen nieuwe backend-logica nodig, want `updatePixelLogic()` forceerde pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens bed-modus getoond als een "vergrendelde" tegel (maan-icoon 🌙, gedimd, geen tik-actie) in plaats van een tegel die een tik toch zou negeren — dat zou verwarrend zijn. De bed-knop zelf licht donkerblauw op zolang bed-modus actief is. Alles synct live mee (elke 3s) via het bestaande `/json`-veld `"bed"` (al aanwezig sinds v0.9), dus ook als bed-modus via `/advanced` wordt aan/uitgezet, past de landingspagina zich automatisch aan.
 
 ### 5.12 mDNS/Bonjour — `http://<naam>.local/` (nieuw in v0.14)
 
@@ -332,7 +334,7 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 | `sw2man`/`swon` | bool/bool | Handmatige relais-2-stand / pomp actief |
 | `hsww` | float | Hysteresisband SWW (°C) |
 | `dsl` | array | Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
-| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat |
+| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat — `bed` stuurt sinds v0.15 ook de vergrendelde weergave van pixel-0-tegel + bed-knop op de landingspagina |
 | `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd — `pn` bepaalt hoeveel licht-tegels de landingspagina tekent |
 | `pon` | string | Bitstring aan/uit-status per pixel |
 | `nr`/`ng`/`nb` | int | Huidige RGB-kleur |
@@ -359,6 +361,7 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
 - [x] **Sketch v0.13 gebouwd:** IST+SOLL samen op één lijn in kaartkleur, overbodige lampje-/sectie-iconen weg (29/09)
 - [x] **Sketch v0.14 gebouwd:** mDNS/Bonjour (`sjalay.local`, naam instelbaar in Settings) (29/09)
+- [x] **Sketch v0.15 gebouwd:** bed-modus/nachtmodus-knop toegevoegd aan de landingspagina (29/09)
 - [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel verder bijstellen
 - [ ] mDNS in de praktijk testen (na flashen): `http://sjalay.local/` openen vanaf een gewone smartphone/laptop op het Sjalay-netwerk
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
