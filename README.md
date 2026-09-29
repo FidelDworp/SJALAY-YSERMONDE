@@ -9,7 +9,7 @@ Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vi
 1. **Verwarming én SWW op afstand aan/uit** — relais 1 op de E1-ingang van de WOLF-ketel, relais 2 op de SWW-laadpomp
 2. **Sensoren monitoren** — temperatuur (meerdere DS18B20-rollen), vocht, licht, beweging, met logging naar Google Sheets
 3. **Verlichting aansturen** — powerpixels, optioneel gekoppeld aan Shelly-stopcontacten
-4. **Overal bereikbaar** — via Tailscale, zonder vaste internet-IP of poort-forwarding
+4. **Overal bereikbaar** — via Tailscale, zonder vaste internet-IP of poort-forwarding, en lokaal ook via mDNS (`http://sjalay.local/`)
 
 ---
 
@@ -94,6 +94,7 @@ E1/HG13=1 regelt enkel CV. Voor SWW werd overwogen: HG13=2 (**afgewezen**, zie 1
 | 4G-router | TP-Link Archer MR600 (Telenet ONE data-SIM, uit oude iPhone 5) |
 | Snelheid | ≈125/25 Mb/s |
 | Subnet Sjalay | **192.168.50.0/24** — gateway `.50.1`, DHCP-pool `.100–.199`, vaste IP's `.2–.99` |
+| mDNS-naam controller | **sjalay.local** (default, instelbaar in Settings — zie 5.12) |
 
 *Hernummerd van `192.168.1.0/24` op 28/09 — zie hoofdstuk 3 voor de reden.*
 
@@ -146,19 +147,20 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.13, 29 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.14, 29 sep 2026)
 
-Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.13) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.14) de bron van waarheid; dit is een leeswijzer erbij.
 
 ### 5.1 Bestand en board-instellingen
 
 - Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB, **Partition Scheme** = Custom (`partitions.csv`), **USB CDC On Boot** = Enabled
 - `#define Serial Serial0` bovenaan — verplicht op de C6
 - Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep op `/advanced`) en `/json` (`ver`)
+- Nieuw sinds v0.14: `#include <ESPmDNS.h>` (standaard onderdeel van de ESP32-Arduino-core, geen extra library-installatie nodig)
 
 ### 5.2 Webinterface — pagina's en endpoints
 
-**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
+**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data). Sinds v0.14 zijn `/` en `/advanced` ook bereikbaar via `http://<mdns-naam>.local/` (zie 5.12), naast het gewone IP-adres.
 
 | Endpoint | Werking |
 |---|---|
@@ -183,7 +185,7 @@ Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJ
 
 ### 5.3 Settings-velden
 
-- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, hysterese verwarming, hysterese SWW, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
+- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), **mDNS-naam (nieuw in v0.14, zie 5.12)**, dauwpuntmarge, hysterese verwarming, hysterese SWW, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
 - **Pixel-namen:** naam + optioneel Shelly-koppeling (`ip:nickname,ip:nickname`, max 3) per pixel
 - **Sensoren (DS18B20):** nickname per sensor, keuze **primaire sensor (kamer)**, keuze **boilersensor (apart, optie "geen")**
 - Los: herscan DS18B20-bus, crash-log wissen, factory reset
@@ -223,6 +225,7 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 - NVS-instellingen overleven firmware-updates (namespace `"sjalay-cfg"`); enkel factory reset wist alles
 - Zonder RoomSense-shield: sketch crasht niet, sensoren tonen gewoon NaN/0 met melding
 - Shelly-koppeling los te testen zonder sensoren (serial toont `[Shelly] ... -> HTTP ...`)
+- mDNS (`.local`) werkt enkel op apparaten/netwerken die het ondersteunen — vrijwel altijd het geval (macOS/iOS ingebouwd via Bonjour, Android en Windows meestal ook), maar als `sjalay.local` ooit niet oplost is het kale IP-adres (Status-pagina) altijd de garantie die werkt
 
 ### 5.9 Versiegeschiedenis (kort)
 
@@ -240,7 +243,8 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.10 | Optionele Shelly-stopcontacten per pixel |
 | v0.11 | SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese voor beide circuits; twee veiligheidslagen altijd actief; alle DS18B20's zichtbaar; sensor pas "ontbrekend" na 3 mislukte lezingen |
 | v0.12 | Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel eronder met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina |
-| **v0.13** | **Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) nu samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; de overbodige sectie-iconen boven de verwarmings-/SWW-kaart zijn weg (dubbelop met het kaart-icoon), en het lampje-icoon boven de lichten-tegels is verwijderd (dubbelop met de lampjes op de tegels zelf)** |
+| v0.13 | Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; overbodige sectie-iconen boven de verwarmings-/SWW-kaart en het lampje-icoon boven de lichten-tegels verwijderd (dubbelop met de kaart-/tegel-iconen zelf) |
+| **v0.14** | **mDNS/Bonjour toegevoegd (`<ESPmDNS.h>`) — de controller is voortaan ook bereikbaar via `http://<naam>.local/` i.p.v. enkel het kale IP-adres. Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"), enkel a-z/0-9/streepjes toegelaten (ongeldige invoer wordt automatisch opgeschoond, terugval "sjalay" bij een lege/volledig ongeldige naam). Start na een geslaagde Wi-Fi-verbinding (niet in AP-setup-modus); een nieuwe naam vereist een herstart, net als de andere Settings-velden. Zichtbaar op `/advanced` (naast IP-adres) en in `/json` ("mdns")** |
 
 ### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
@@ -278,6 +282,18 @@ Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijve
 - Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` het kleine SOLL-stuk tussen haakjes.
 - 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
 
+### 5.12 mDNS/Bonjour — `http://<naam>.local/` (nieuw in v0.14)
+
+**Aanleiding:** het kale IP-adres (bv. `192.168.50.10`) onthouden of steeds opzoeken is onhandig, zeker voor gasten/huurders die de landingspagina op hun eigen toestel willen bookmarken. Een vaste, leesbare naam lost dat op.
+
+- Gebruikt de standaard `<ESPmDNS.h>`-library uit de ESP32-Arduino-core (geen extra installatie).
+- Default naam: **`sjalay`** → `http://sjalay.local/`. Instelbaar in Settings (§5.3), nieuw veld "mDNS-naam", opgeslagen in NVS (`mdns_name`).
+- **Validatie (`sanitizeMdnsName()`):** invoer wordt automatisch omgezet naar kleine letters, enkel `a-z`, `0-9` en `-` blijven staan (andere tekens, spaties, punten worden weggegooid), geen leidend/sluitend streepje, en bij een lege of volledig ongeldige invoer valt de naam terug op `"sjalay"` — een wijziging in Settings kan dus nooit een onbruikbare hostnaam opleveren.
+- **Opstart:** `MDNS.begin(mdns_name)` + `MDNS.addService("http","tcp",80)` gebeurt in `setup()`, ná een geslaagde Wi-Fi-verbinding (`!ap_mode_active`) — in de AP-setup-modus blijft het vaste `192.168.4.1` het aanspreekpunt, daar voegt mDNS niets toe.
+- **Een nieuwe naam vereist een herstart** (net als elk ander Settings-veld — `/save_settings` herstart altijd).
+- Zichtbaar op `/advanced` (nieuwe rij "mDNS-naam" naast "IP-adres") en in `/json` als `"mdns"`. Niet apart getoond op de landingspagina (die blijft bewust tekstarm), maar werkt daar uiteraard even goed: `http://sjalay.local/` opent rechtstreeks de landingspagina.
+- **Beperking om te weten:** mDNS werkt enkel binnen hetzelfde lokale netwerk (niet via Tailscale/internet) en vereist mDNS-ondersteuning op het toestel dat verbindt — in de praktijk vrijwel altijd aanwezig (macOS/iOS: Bonjour ingebouwd; Android en Windows 10/11: meestal ook), maar bij twijfel blijft het IP-adres op `/advanced` de garantie die altijd werkt.
+
 ---
 
 ## 6. JSON-velden (`/json`)
@@ -289,6 +305,7 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 | `rid` | string | Room-naam |
 | `ver` | string | Firmwareversie |
 | `ip` | string | IP-adres |
+| `mdns` | string | mDNS-hostnaam zonder `.local` (v0.14) — volledig adres is `http://<mdns>.local/` |
 | `rssi` | int | Wi-Fi signaal (dBm) |
 | `heap` | uint | Vrije heap (KB) |
 | `lb` | uint | Grootste vrije geheugenblok (KB) |
@@ -341,5 +358,7 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
 - [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
 - [x] **Sketch v0.13 gebouwd:** IST+SOLL samen op één lijn in kaartkleur, overbodige lampje-/sectie-iconen weg (29/09)
+- [x] **Sketch v0.14 gebouwd:** mDNS/Bonjour (`sjalay.local`, naam instelbaar in Settings) (29/09)
 - [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel verder bijstellen
+- [ ] mDNS in de praktijk testen (na flashen): `http://sjalay.local/` openen vanaf een gewone smartphone/laptop op het Sjalay-netwerk
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
