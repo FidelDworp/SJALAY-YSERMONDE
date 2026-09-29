@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v0.11 — 29 sep 2026
+// SJALAY CONTROLLER — v0.13 — 29 sep 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -24,6 +24,32 @@
 //   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
 //   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
 //
+// v0.13  (29sep26): Landingspagina bijgeschaafd na feedback (2 rondes): (1) IST (huidige
+//                   gemeten temp) en SOLL (effectieve/gevraagde doeltemp) nu samen op één
+//                   lijn i.p.v. twee losse regels — groot IST eerst, in de kaartkleur
+//                   (oranje/blauw), gevolgd door SOLL kleiner tussen haakjes met een spatie
+//                   ervoor, bv. "21.3° (-> 21°)" — leesbaarder dan de vorige kleine grijze
+//                   regel eronder. (2) De overbodige sectie-iconen boven de verwarmings-/
+//                   SWW-kaart zijn weg (stonden dubbel met het icoon op de kaart zelf), en
+//                   het lampje-icoon boven de lichten-tegels is ook verwijderd (stond dubbel
+//                   met de lampjes op de tegels zelf).
+// v0.12  (29sep26): Eenvoudige landingspagina op "/" voor huurders/gasten — enkel wat zij
+//                   echt nodig hebben: grote licht-tegels (aan/uit + kleurkiezer), en voor
+//                   verwarming/SWW een groot cijfer met de HUIDIGE (gemeten) temperatuur,
+//                   een kleine "-> X°"-regel met de effectieve/gevraagde doeltemp, en de
+//                   setpoint-schuifregelaar (géén Auto/Handmatig-schakelaars of los relais
+//                   zichtbaar, géén overbodige sectie-icoontjes naast de toch al grote
+//                   vlam/watersproeier-iconen op de kaarten zelf). Bij ELKE keer laden van
+//                   "/" worden beide regelkringen geforceerd naar Auto gezet (NVS enkel
+//                   beschreven bij een echte wissel), zodat een gast nooit per ongeluk in
+//                   Handmatig vastzit. De technische Status-pagina verhuisde van "/" naar
+//                   "/advanced" (zelfde inhoud/gedrag, enkel het pad wijzigde); bereikbaar
+//                   via een klein tandwiel-icoon onderaan de landingspagina. Status/OTA/
+//                   Settings kregen op hun beurt een huisje-icoon in de sidebar dat
+//                   terugleidt naar "/". Pixel 0 (MOV1): aanraken vanop de landingspagina
+//                   terwijl hij nog in AUTO staat, schakelt hem nu impliciet naar MANUEEL
+//                   (geen gedragswijziging op de Advanced-pagina, waar die knop toch al
+//                   enkel zichtbaar was in MANUEEL).
 // v0.11  (29sep26): SWW-regeling via tweede relais (IO2 -> SWW-laadpomp, 230V,
 //                   4-relaismodule). Nieuwe boilersensor-rol (los van de primaire
 //                   kamersensor) instelbaar in Settings, met eigen setpoint-slider
@@ -136,7 +162,7 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-#define SJALAY_VERSION "0.11"
+#define SJALAY_VERSION "0.13"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -339,7 +365,8 @@ void writeSharedCSS(AsyncResponseStream *p) {
 
 void writeSidebar(AsyncResponseStream *p, const char* active) {
   p->print("<div class=\"sidebar\">");
-  p->printf("<a href=\"/\" class=\"%s\">Status</a>", strcmp(active,"status")==0 ? "active":"");
+  p->print("<a href=\"/\" style=\"font-size:20px;padding:6px;\" title=\"Eenvoudige weergave\">&#127968;</a>");
+  p->printf("<a href=\"/advanced\" class=\"%s\">Status</a>", strcmp(active,"status")==0 ? "active":"");
   p->printf("<a href=\"/update\" class=\"%s\">OTA</a>", strcmp(active,"ota")==0 ? "active":"");
   p->print("<a href=\"/json\">JSON</a>");
   p->printf("<a href=\"/settings\" class=\"%s\">Settings</a>", strcmp(active,"settings")==0 ? "active":"");
@@ -935,6 +962,136 @@ void factoryResetAndReboot() {
   ESP.restart();
 }
 
+// ============== WEB-UI: LANDINGSPAGINA (eenvoudige weergave voor huurders/gasten) ==============
+// Bewust minimalistisch: enkel de knoppen die een gast echt nodig heeft (licht aan/uit +
+// kleur, verwarmings-/SWW-setpoint), geen tekstlabels waar een icoon/kleur volstaat, geen
+// Auto/Handmatig-schakelaars of los relais. Bij elke keer laden wordt BEIDE regelkringen
+// geforceerd naar Auto gezet (veiligheid: een gast mag nooit per ongeluk in Handmatig
+// vastzitten) - NVS wordt enkel beschreven bij een effectieve wissel, niet bij elke reload.
+void handleLanding(AsyncWebServerRequest *request) {
+  bool nvs_dirty = false;
+  preferences.begin("sjalay-cfg", false);
+  if (!heating_auto) { heating_auto = true; preferences.putBool("heat_auto", true); nvs_dirty = true; }
+  if (!sww_auto)     { sww_auto     = true; preferences.putBool("sww_auto", true);  nvs_dirty = true; }
+  preferences.end();
+  if (nvs_dirty) { updateHeatingLogic(); updateSWWLogic(); }
+
+  AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
+  p->print("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>");
+  p->print(room_id);
+  p->print("</title><style>"
+    "*{box-sizing:border-box;}"
+    "body{font-family:Arial,sans-serif;background:#f2f2f2;margin:0;padding:0;color:#222;}"
+    ".hdr{background:#ffcc00;padding:18px 10px;text-align:center;font-size:24px;font-weight:bold;}"
+    ".wrap{max-width:480px;margin:0 auto;padding:16px;}"
+    ".sec{font-size:12px;color:#999;text-transform:uppercase;letter-spacing:1px;margin:22px 4px 8px;}"
+    ".lights{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:12px;margin-top:6px;}"
+    ".ltile{aspect-ratio:1/1;border-radius:16px;border:none;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.15);"
+    "display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;padding:6px;"
+    "transition:background .2s;}"
+    ".ltile .ic{font-size:30px;filter:grayscale(1) opacity(.45);}"
+    ".ltile.on .ic{filter:none;}"
+    ".ltile .nm{font-size:11px;margin-top:4px;color:#555;text-align:center;line-height:1.2;}"
+    ".ltile.on .nm{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);}"
+    ".colorwrap{display:flex;align-items:center;justify-content:center;margin-top:10px;}"
+    ".colorwrap input[type=color]{width:52px;height:52px;border:none;border-radius:50%;padding:0;cursor:pointer;background:none;}"
+    ".card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.15);padding:18px;text-align:center;margin-bottom:16px;}"
+    ".card .ic{font-size:34px;}"
+    ".card .big{font-size:40px;font-weight:bold;margin:6px 0 14px;}"
+    ".card .big .soll{font-size:20px;font-weight:normal;}"
+    ".card.heat .ic,.card.heat .big{color:#e05c00;}"
+    ".card.sww .ic,.card.sww .big{color:#0077cc;}"
+    ".dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#ccc;margin-left:8px;vertical-align:middle;}"
+    "input[type=range]{width:90%;height:34px;}"
+    ".gearwrap{text-align:center;margin:28px 0 10px;}"
+    ".gearwrap a{font-size:26px;text-decoration:none;opacity:.5;}"
+    "</style></head><body>");
+
+  p->print("<div class=\"hdr\">");
+  p->print(room_id);
+  p->print("</div><div class=\"wrap\">");
+
+  // ---- Lichten ----
+  p->print("<div class=\"lights\" id=\"lights\">");
+  char hexcol[8]; snprintf(hexcol, sizeof(hexcol), "#%02x%02x%02x", neo_r, neo_g, neo_b);
+  for (int i = 0; i < pixels_num; i++) {
+    p->printf("<button type=\"button\" class=\"ltile%s\" id=\"lt-%d\" data-idx=\"%d\" style=\"background:%s\" "
+      "onclick=\"toggleLight(%d)\"><span class=\"ic\">&#128161;</span><span class=\"nm\">%s</span></button>",
+      pixel_on[i] ? " on" : "", i, i, pixel_on[i] ? hexcol : "#fff", i, pixel_nicknames[i]);
+  }
+  p->print("</div>");
+  p->printf("<div class=\"colorwrap\"><input type=\"color\" id=\"colorPicker\" value=\"%s\" onchange=\"setNeoColor(this.value)\"></div>", hexcol);
+
+  // ---- Verwarming ----
+  // IST (huidige, gemeten temperatuur) en SOLL (effectieve/gevraagde doeltemp, incl.
+  // dauwpuntcorrectie) samen op één lijn, in de kaartkleur: groot IST eerst, dan kleiner
+  // "(-> X°)" tussen haakjes met spatie ervoor - live bijgewerkt tijdens het schuiven en
+  // nadien gesynchroniseerd met de echte effectieve setpoint via /json.
+  p->printf("<div class=\"card heat\"><div class=\"ic\">&#128293;"
+    "<span class=\"dot\" id=\"dot-heat\" style=\"background:%s\"></span></div>"
+    "<div class=\"big\"><span id=\"v-rt\">%s</span><span class=\"soll\" id=\"v-heff-t\"> (&rarr; %d&deg;)</span></div>"
+    "<form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
+    "<input type=\"range\" id=\"sl-hsp\" min=\"10\" max=\"30\" value=\"%d\" "
+    "oninput=\"document.getElementById('v-heff-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
+    "onchange=\"setVal('/set_setpoint',this.value)\"></form></div>",
+    heating_on ? "#e05c00" : "#ccc",
+    room_temp_reliable ? (String(room_temp, 1) + "&deg;").c_str() : "n.v.t.",
+    heating_setpoint, heating_setpoint);
+
+  // ---- SWW ----
+  // Idem: groot IST (gemeten boilertemp), klein "(-> X°)" = SOLL (setpoint; voor SWW
+  // momenteel gelijk aan de effectieve doeltemp, geen aparte correctie zoals bij verwarming).
+  p->printf("<div class=\"card sww\"><div class=\"ic\">&#128703;"
+    "<span class=\"dot\" id=\"dot-sww\" style=\"background:%s\"></span></div>"
+    "<div class=\"big\"><span id=\"v-bt\">%s</span><span class=\"soll\" id=\"v-bsp-t\"> (&rarr; %d&deg;)</span></div>"
+    "<form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
+    "<input type=\"range\" id=\"sl-bsp\" min=\"40\" max=\"60\" value=\"%d\" "
+    "oninput=\"document.getElementById('v-bsp-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
+    "onchange=\"setVal('/set_boiler_setpoint',this.value)\"></form></div>",
+    sww_on ? "#0077cc" : "#ccc",
+    boiler_temp_reliable ? (String(temp_boiler, 1) + "&deg;").c_str() : "n.v.t.",
+    boiler_setpoint, boiler_setpoint);
+
+  // ---- Geavanceerd (enkel icoon, geen tekst) ----
+  p->print("<div class=\"gearwrap\"><a href=\"/advanced\">&#9881;&#65039;</a></div>");
+
+  p->print("<script>"
+    "function toHex(v){return ('0'+Math.round(v).toString(16)).slice(-2);}"
+    "var lastHex='#ffffff';"
+    "function setVal(url,v){fetch(url+'?value='+v).then(refresh);}"
+    "function toggleLight(i){fetch('/toggle_pixel?idx='+i).then(refresh);}"
+    "function setNeoColor(hex){"
+      "var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);"
+      "lastHex=hex;"
+      "fetch('/setcolor?r='+r+'&g='+g+'&b='+b).then(refresh);}"
+    "function refresh(){"
+      "fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{"
+        "lastHex='#'+toHex(data.nr)+toHex(data.ng)+toHex(data.nb);"
+        "if(document.activeElement.id!=='colorPicker')document.getElementById('colorPicker').value=lastHex;"
+        "for(var i=0;i<data.pn;i++){"
+          "var t=document.getElementById('lt-'+i);if(!t)continue;"
+          "var on=data.pon.charAt(i)==='1';"
+          "t.className='ltile'+(on?' on':'');"
+          "t.style.background=on?lastHex:'#fff';"
+        "}"
+        "var vr=document.getElementById('v-rt');if(vr)vr.textContent=data.rtok?data.rt.toFixed(1)+'°':'n.v.t.';"
+        "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+data.heff.toFixed(1)+'°)';"
+        "var hs=document.getElementById('sl-hsp');if(hs&&document.activeElement.id!=='sl-hsp')hs.value=data.hsp;"
+        "var dh=document.getElementById('dot-heat');if(dh)dh.style.background=data.hon?'#e05c00':'#ccc';"
+        "var vb=document.getElementById('v-bt');if(vb)vb.textContent=data.btok?data.bt.toFixed(1)+'°':'n.v.t.';"
+        "var bt=document.getElementById('v-bsp-t');if(bt&&document.activeElement.id!=='sl-bsp')bt.textContent=' (→ '+data.bsp+'°)';"
+        "var bs=document.getElementById('sl-bsp');if(bs&&document.activeElement.id!=='sl-bsp')bs.value=data.bsp;"
+        "var ds=document.getElementById('dot-sww');if(ds)ds.style.background=data.swon?'#0077cc':'#ccc';"
+      "}).catch(e=>console.error(e));}"
+    "document.addEventListener('DOMContentLoaded',function(){refresh();setInterval(refresh,3000);});"
+    "</script>");
+
+  p->print("</div></body></html>");
+  request->send(p);
+}
+
 // ============== WEB-UI: STATUS ==============
 void handleStatus(AsyncWebServerRequest *request) {
   AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
@@ -1453,6 +1610,13 @@ void handleTogglePixel(AsyncWebServerRequest *request) {
       pixel0_manual_on = !pixel0_manual_on;
       preferences.begin("sjalay-cfg", false);
       preferences.putBool("pixel0_man_on", pixel0_manual_on);
+      // Aangeraakt vanop de landingspagina kan pixel 0 nog in AUTO staan -> dan
+      // impliciet naar MANUEEL schakelen (op de Advanced-pagina is deze knop
+      // sowieso enkel zichtbaar wanneer al MANUEEL, dus geen gedragswijziging daar).
+      if (pixel0_mode != 1) {
+        pixel0_mode = 1;
+        preferences.putInt("pixel_mode_0", pixel0_mode);
+      }
       preferences.end();
       updatePixelLogic();
     } else if (idx >= 1 && idx < pixels_num) {
@@ -1676,7 +1840,8 @@ void setup() {
   DefaultHeaders::Instance().addHeader("Pragma", "no-cache");
   DefaultHeaders::Instance().addHeader("Expires", "-1");
 
-  server.on("/", HTTP_GET, handleStatus);
+  server.on("/", HTTP_GET, handleLanding);
+  server.on("/advanced", HTTP_GET, handleStatus);
   server.on("/settings", HTTP_GET, handleSettings);
   server.on("/save_settings", HTTP_GET, handleSaveSettings);
   server.on("/factory_reset", HTTP_GET, handleFactoryReset);
