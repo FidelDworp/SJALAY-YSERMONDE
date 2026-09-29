@@ -1,5 +1,5 @@
 // ============================================================================
-// ESP32-C6_SJALAY_CONTROLLER.ino — v1.0 — 28 sep 2026
+// SJALAY CONTROLLER — v0.11 — 29 sep 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -22,7 +22,26 @@
 //   [x] STAP 6 — Google Sheets POST elke 5 min
 //   [x] STAP 7 — Settings-uitbreiding + opkuis/review
 //   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
+//   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
 //
+// v0.11  (29sep26): SWW-regeling via tweede relais (IO2 -> SWW-laadpomp, 230V,
+//                   4-relaismodule). Nieuwe boilersensor-rol (los van de primaire
+//                   kamersensor) instelbaar in Settings, met eigen setpoint-slider
+//                   (40-60°C, Status-pagina). Automatisch/Handmatig-modus voor
+//                   relais 2, analoog aan de verwarming. ECHTE hysterese ingevoerd
+//                   voor BEIDE circuits (voorheen enkel een vaste -0.5°C-offset
+//                   zonder aparte aan/uit-drempel -> pendelde constant): symmetrische
+//                   band rond de setpoint, instelbaar in Settings (default 1,0°C
+//                   verwarming, 5,0°C SWW). Twee onafhankelijke veiligheidslagen,
+//                   ALTIJD actief ongeacht Auto/Handmatig: (1) geforceerd UIT zodra
+//                   de gemeten temp de bovengrens van de bijhorende setpoint-slider
+//                   bereikt (30°C resp. 60°C); (2) geforceerd UIT bij onbetrouwbare
+//                   temperatuurdata (kamer: DS+DHT22 beide defect; boiler: geen
+//                   bruikbare sensor, geen terugval mogelijk). Sensor-"ontbrekend"
+//                   pas na 3 opeenvolgende mislukte lezingen (voorkomt trigger door
+//                   een toevallige CRC-glitch). Alle gevonden DS18B20's (niet enkel
+//                   de toegewezen rollen) nu zichtbaar met naam+temp op Status en in
+//                   /json ("dsl"-array).
 // v0.10  (28sep26): Optionele koppeling met Shelly-slimme-stopcontacten per pixel.
 //                   Settings: extra veld per pixel "ip:naam,ip:naam" (max 3 Shelly's
 //                   per pixel). Bij elke effectieve AAN/UIT-wissel van een pixel
@@ -117,29 +136,38 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-#define SJALAY_VERSION "0.10"
+#define SJALAY_VERSION "0.11"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
 #define ONE_WIRE_PIN 3   // IO3  - DS18B20 OneWire
 #define LDR_ANALOG   1   // IO1  - LDR1 analog (10k pull-up naar 3V3)
 #define PIR_MOV1     5   // IO5  - PIR MOV1 (LOW = beweging)
-#define RELAY_PIN   10   // IO10 - Relais -> WOLF ketel E1-ingang
+#define RELAY_PIN   10   // IO10 - Relais 1 -> WOLF ketel E1-ingang
+#define RELAY2_PIN   2   // IO2  - Relais 2 -> SWW-laadpomp (230V, via 4-relaismodule)
 #define PIXEL_PIN    4   // IO4  - NeoPixel / Powerpixels data
-// Nog niet actief (volgt in latere stappen):
-// IO15 reserve relais
+// IO15 blijft vrije reserve (was hiervoor gepland voor relais 2, IO2 gekozen i.p.v.
+// omwille van fysieke bedradingsgemak naast IO10 op de shield).
 
 // LET OP: pas dit aan als jouw relaismodule actief-HOOG is (signaal HIGH = relais dicht)
 #define RELAY_ACTIVE_LOW true
 inline void setRelay(bool on) {
   digitalWrite(RELAY_PIN, on ? (RELAY_ACTIVE_LOW ? LOW : HIGH) : (RELAY_ACTIVE_LOW ? HIGH : LOW));
 }
+inline void setRelay2(bool on) {
+  digitalWrite(RELAY2_PIN, on ? (RELAY_ACTIVE_LOW ? LOW : HIGH) : (RELAY_ACTIVE_LOW ? HIGH : LOW));
+}
 
 // ============== SENSOR HEALTH THRESHOLDS ==============
-#define SENSOR_TEMP_MIN  5.0f   // °C — onder = sensor defect
-#define SENSOR_TEMP_MAX 40.0f   // °C — boven = sensor defect
+#define SENSOR_TEMP_MIN  5.0f   // °C — onder = sensor defect (kamer)
+#define SENSOR_TEMP_MAX 40.0f   // °C — boven = sensor defect (kamer)
 #define SENSOR_HUMI_MIN  10     // %  — onder = sensor defect
 #define SENSOR_HUMI_MAX  99     // %  — boven = sensor defect
+#define SENSOR_BOILER_MIN 0.0f  // °C — onder = boilersensor defect (ander bereik dan kamer!)
+#define SENSOR_BOILER_MAX 90.0f // °C — boven = boilersensor defect
+#define DS_FAIL_THRESHOLD 3     // opeenvolgende mislukte lezingen vóór "sensor ontbreekt"
+#define HEATING_SETPOINT_MAX 30 // bovengrens verwarmings-slider = harde veiligheidsgrens
+#define BOILER_SETPOINT_MAX  60 // bovengrens SWW-slider = harde veiligheidsgrens
 
 DHT dht(DHT_PIN, DHT22);
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);
@@ -151,20 +179,35 @@ OneWireNg::Id ds_addrs[DS_MAX_SENSORS];
 float temp_ds_arr[DS_MAX_SENSORS];
 char ds_nicknames[DS_MAX_SENSORS][48];
 int ds_primary = 0;
+int ds_boiler = -1;                          // index van de boilersensor, -1 = geen toegewezen
+bool ds_valid_this_read[DS_MAX_SENSORS];     // laatste-lezing geldig? (voor UI/json)
+int ds_fail_streak[DS_MAX_SENSORS] = {0};    // opeenvolgende mislukte lezingen per sensor
 
 // Sensorwaarden
 float temp_dht = 0, temp_ds = 0, humi = 0, dew = 0, room_temp = 0;
+float temp_boiler = 0;
 int light_ldr = 0;
 int mov1_triggers = 0;
 char temp_melding[48] = "";
+char boiler_melding[48] = "";
+bool room_temp_reliable = true;    // false = kamer-DS én DHT22 beide defect -> verwarming geblokkeerd
+bool boiler_temp_reliable = true;  // false = geen bruikbare boilersensor -> SWW-pomp geblokkeerd
 
-// Verwarmingslogica / relais
+// Verwarmingslogica / relais 1 (WOLF E1)
 bool heating_auto = false;        // false = handmatige modus (default, voor test zonder sensoren)
 bool relay_manual = false;        // gewenste relaisstaat in handmatige modus
 int heating_setpoint = 20;        // gewenste temp in automatische modus (10-30)
 float dew_margin = 2.0;           // dauwpunt-veiligheidsmarge (°C)
 bool heating_on = false;          // huidige relaisstaat (= ketelvraag)
 float effective_setpoint = 20.0;  // laatst berekende effectieve setpoint (voor display)
+float hyst_cv = 1.0;              // hysteresisband verwarming (°C, symmetrisch rond setpoint)
+
+// SWW-logica / relais 2 (laadpomp)
+bool sww_auto = false;            // false = handmatige modus (default)
+bool relay2_manual = false;       // gewenste relais2-staat in handmatige modus
+int boiler_setpoint = 40;         // gewenste boilertemp (40-60)
+bool sww_on = false;              // huidige relais2-staat
+float hyst_sww = 5.0;             // hysteresisband SWW (°C, symmetrisch rond setpoint)
 
 // ============== DUTY-CYCLUS VERWARMING (4u sliding window, 12x20min) ==============
 #define DUTY_SLOTS 12
@@ -368,6 +411,10 @@ void scanDS18B20() {
   }
   ds_primary = constrain(preferences.getInt("ds_primary", 0), 0, max(ds_count - 1, 0));
   preferences.putInt("ds_primary", ds_primary);
+  ds_boiler = preferences.getInt("ds_boiler", -1);
+  if (ds_boiler >= ds_count) ds_boiler = -1;  // ongeldig geworden na herscan (minder sensoren) -> resetten
+  preferences.putInt("ds_boiler", ds_boiler);
+  for (int i = 0; i < DS_MAX_SENSORS; i++) ds_fail_streak[i] = 0;
   preferences.end();
 }
 
@@ -375,6 +422,8 @@ void loadDS18B20fromNVS() {
   preferences.begin("sjalay-cfg", true);
   ds_count = preferences.getInt("ds_count", 0);
   ds_primary = constrain(preferences.getInt("ds_primary", 0), 0, max(ds_count - 1, 0));
+  ds_boiler = preferences.getInt("ds_boiler", -1);
+  if (ds_boiler >= ds_count) ds_boiler = -1;
   for (int i = 0; i < ds_count; i++) {
     char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
     preferences.getBytes(akey, ds_addrs[i], 8);
@@ -395,6 +444,7 @@ void readDS18B20temps() {
   delay(750);
 
   for (int i = 0; i < ds_count; i++) {
+    ds_valid_this_read[i] = false;
     ow.reset();
     ow.writeByte(0x55);  // MATCH ROM
     for (int j = 0; j < 8; j++) ow.writeByte(ds_addrs[i][j]);
@@ -406,13 +456,21 @@ void readDS18B20temps() {
     uint8_t crc = OneWireNg::crc8(data, 8);
     if (crc != data[8]) {
       Serial.printf("[DS18B20] CRC fout sensor %d — waarde genegeerd\n", i);
+      if (ds_fail_streak[i] < 255) ds_fail_streak[i]++;
       continue;
     }
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
     float t = raw / 16.0f;
-    if (t >= -55.0f && t <= 125.0f) temp_ds_arr[i] = t;
+    if (t >= -55.0f && t <= 125.0f) {
+      temp_ds_arr[i] = t;
+      ds_valid_this_read[i] = true;
+      ds_fail_streak[i] = 0;
+    } else if (ds_fail_streak[i] < 255) {
+      ds_fail_streak[i]++;
+    }
   }
-  temp_ds = temp_ds_arr[ds_primary];
+  temp_ds     = (ds_primary >= 0 && ds_primary < ds_count) ? temp_ds_arr[ds_primary] : 0.0f;
+  temp_boiler = (ds_boiler  >= 0 && ds_boiler  < ds_count) ? temp_ds_arr[ds_boiler]  : 0.0f;
 }
 
 void readAllSensors() {
@@ -422,37 +480,91 @@ void readAllSensors() {
   readDS18B20temps();
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
 
-  // Room temp: primair DS18B20, fallback DHT22, anders 0 + melding
+  // --- Kamertemperatuur: primaire DS18B20 -> terugval DHT22 -> anders onbetrouwbaar ---
+  bool primary_missing = (ds_count == 0) || (ds_primary < 0) || (ds_primary >= ds_count)
+                          || (ds_fail_streak[ds_primary] >= DS_FAIL_THRESHOLD)
+                          || (temp_ds < SENSOR_TEMP_MIN) || (temp_ds > SENSOR_TEMP_MAX);
   room_temp = temp_ds;
   temp_melding[0] = '\0';
-  if (ds_count == 0 || isnan(temp_ds) || temp_ds < SENSOR_TEMP_MIN || temp_ds > SENSOR_TEMP_MAX) {
+  room_temp_reliable = true;
+  if (primary_missing) {
     room_temp = temp_dht;
-    strncpy(temp_melding, ds_count == 0 ? "Geen DS18B20 gevonden - DHT22 gebruikt" : "DS18B20 defect - DHT22 gebruikt", sizeof(temp_melding) - 1);
+    strncpy(temp_melding, ds_count == 0 ? "Geen DS18B20 gevonden - DHT22 gebruikt" : "DS18B20 (kamer) defect/ontbreekt - DHT22 gebruikt", sizeof(temp_melding) - 1);
     if (isnan(temp_dht) || temp_dht < SENSOR_TEMP_MIN || temp_dht > SENSOR_TEMP_MAX) {
       room_temp = 0.0;
-      strncpy(temp_melding, "Beide temp-sensoren defect!", sizeof(temp_melding) - 1);
+      room_temp_reliable = false;
+      strncpy(temp_melding, "Beide temp-sensoren defect - verwarming geblokkeerd!", sizeof(temp_melding) - 1);
     }
+  }
+
+  // --- Boilertemperatuur: enkel de toegewezen DS-sensor, GEEN terugval mogelijk ---
+  boiler_melding[0] = '\0';
+  boiler_temp_reliable = true;
+  bool boiler_missing = (ds_boiler < 0) || (ds_boiler >= ds_count)
+                         || (ds_fail_streak[ds_boiler] >= DS_FAIL_THRESHOLD)
+                         || (temp_boiler < SENSOR_BOILER_MIN) || (temp_boiler > SENSOR_BOILER_MAX);
+  if (boiler_missing) {
+    boiler_temp_reliable = false;
+    strncpy(boiler_melding, ds_boiler < 0 ? "Geen boilersensor toegewezen - SWW-pomp geblokkeerd" : "Boilersensor defect/ontbreekt - SWW-pomp geblokkeerd", sizeof(boiler_melding) - 1);
   }
 
   mov1_triggers = countRecent(mov1Times, MOV_BUF_SIZE);
 }
 
-// ============== VERWARMINGSLOGICA + RELAIS ==============
+// ============== VERWARMINGSLOGICA + RELAIS 1 (WOLF E1) ==============
 // Automatisch: softwarethermostaat met dauwpuntbeveiliging (effective = max(setpoint, dew+margin))
+//              en een ECHTE symmetrische hysteresisband rond de effectieve setpoint
+//              (AAN onder setpoint-hyst/2, UIT boven setpoint+hyst/2, ertussen: stand behouden).
+//              V0.10 en vroeger gebruikte enkel een vaste -0.5°C-offset zonder aparte
+//              uitschakeldrempel -> geen echte band -> pendelde bij grensgevallen.
 // Handmatig:   relais volgt rechtstreeks de UI-schakelaar (voor test zonder werkende sensoren)
+// Veiligheid (ALTIJD actief, ongeacht modus):
+//   1) geforceerd UIT zodra room_temp de bovengrens van de setpoint-slider bereikt
+//   2) geforceerd UIT bij onbetrouwbare temperatuurdata (room_temp_reliable == false)
 void updateHeatingLogic() {
   bool new_state;
   if (heating_auto) {
     effective_setpoint = max((float)heating_setpoint, dew + dew_margin);
-    new_state = (room_temp < effective_setpoint - 0.5);
+    float half = hyst_cv / 2.0f;
+    if (room_temp < effective_setpoint - half) new_state = true;
+    else if (room_temp > effective_setpoint + half) new_state = false;
+    else new_state = heating_on;  // binnen de band: huidige stand behouden (dit IS de hysterese)
   } else {
     effective_setpoint = heating_setpoint;
     new_state = relay_manual;
   }
+
+  if (room_temp >= HEATING_SETPOINT_MAX) new_state = false;  // veiligheidsgrens
+  if (!room_temp_reliable) new_state = false;                // geen betrouwbare data
+
   if (new_state != heating_on) {
     heating_on = new_state;
     setRelay(heating_on);
-    Serial.printf("[RELAIS] -> %s (modus: %s)\n", heating_on ? "AAN" : "UIT", heating_auto ? "automatisch" : "handmatig");
+    Serial.printf("[RELAIS1] -> %s (modus: %s)\n", heating_on ? "AAN" : "UIT", heating_auto ? "automatisch" : "handmatig");
+  }
+}
+
+// ============== SWW-LOGICA + RELAIS 2 (LAADPOMP) ==============
+// Zelfde opzet als de verwarming: Automatisch (hysteresisband rond boiler_setpoint) of
+// Handmatig, met dezelfde twee veiligheidslagen, ALTIJD actief ongeacht modus.
+void updateSWWLogic() {
+  bool new_state;
+  if (sww_auto) {
+    float half = hyst_sww / 2.0f;
+    if (temp_boiler < boiler_setpoint - half) new_state = true;
+    else if (temp_boiler > boiler_setpoint + half) new_state = false;
+    else new_state = sww_on;
+  } else {
+    new_state = relay2_manual;
+  }
+
+  if (temp_boiler >= BOILER_SETPOINT_MAX) new_state = false;  // veiligheidsgrens
+  if (!boiler_temp_reliable) new_state = false;                // geen bruikbare boilersensor
+
+  if (new_state != sww_on) {
+    sww_on = new_state;
+    setRelay2(sww_on);
+    Serial.printf("[RELAIS2] -> %s (modus: %s)\n", sww_on ? "AAN" : "UIT", sww_auto ? "automatisch" : "handmatig");
   }
 }
 
@@ -692,10 +804,41 @@ uint32_t getCrashCount() {
   return cnt;
 }
 
+// ============== JSON HELPERS ==============
+// Minimale escaping (quotes/backslashes) voor vrije-tekstvelden die in JSON-strings belanden
+// (nicknames kunnen door de gebruiker vrij getypt worden in Settings).
+void escapeJSONString(const char *in, char *out, size_t outsize) {
+  size_t o = 0;
+  for (size_t i = 0; in[i] != '\0' && o + 2 < outsize; i++) {
+    if (in[i] == '"' || in[i] == '\\') out[o++] = '\\';
+    if (o + 1 < outsize) out[o++] = in[i];
+  }
+  out[o] = '\0';
+}
+
+// Bouwt een JSON-array met alle gevonden DS18B20's (niet enkel de toegewezen rollen),
+// elk met naam, laatste temp, geldig-deze-lezing, en rol (kamer/boiler/leeg).
+void buildDSListJSON(char *out, size_t outsize) {
+  strlcpy(out, "[", outsize);
+  for (int i = 0; i < ds_count; i++) {
+    if (i > 0) strlcat(out, ",", outsize);
+    char nameEsc[64]; escapeJSONString(ds_nicknames[i], nameEsc, sizeof(nameEsc));
+    bool ok = ds_fail_streak[i] < DS_FAIL_THRESHOLD;
+    const char* role = (i == ds_primary) ? "kamer" : (i == ds_boiler) ? "boiler" : "";
+    char entry[140];
+    snprintf(entry, sizeof(entry), "{\"n\":\"%s\",\"t\":%.1f,\"ok\":%s,\"role\":\"%s\"}",
+      nameEsc, temp_ds_arr[i], ok ? "true" : "false", role);
+    strlcat(out, entry, outsize);
+  }
+  strlcat(out, "]", outsize);
+}
+
 // ============== JSON ==============
 // Compact schema — controller + sensorvelden. Relais/pixel-velden volgen in latere stappen.
 String getJSON() {
-  char buf[800];
+  char dsl[600];
+  buildDSListJSON(dsl, sizeof(dsl));
+  char buf[1700];
   unsigned long upt = (millis() - boot_millis) / 1000;
   char tm_esc[48]; strlcpy(tm_esc, temp_melding, sizeof(tm_esc));  // geen quotes/backslashes in melding, dus veilig
   // NaN (sensor niet aangesloten/defect) mag niet in JSON terechtkomen -> naar 0, t2ok/dsok geven de status
@@ -707,12 +850,15 @@ String getJSON() {
   char pon[MAX_PIXELS + 1];
   for (int i = 0; i < pixels_num && i < MAX_PIXELS; i++) pon[i] = pixel_on[i] ? '1' : '0';
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
+  char btm_esc[48]; strlcpy(btm_esc, boiler_melding, sizeof(btm_esc));  // idem tm_esc: geen quotes verwacht
   snprintf(buf, sizeof(buf),
     "{\"rid\":\"%s\",\"ver\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,"
     "\"heap\":%u,\"lb\":%u,\"crash\":%u,\"upt\":%lu,\"ap\":%s,"
-    "\"t2\":%.1f,\"t2ok\":%s,\"h\":%.1f,\"dp\":%.1f,\"t1\":%.1f,\"dsok\":%s,\"dsc\":%d,\"rt\":%.1f,\"tm\":\"%s\","
+    "\"t2\":%.1f,\"t2ok\":%s,\"h\":%.1f,\"dp\":%.1f,\"t1\":%.1f,\"dsok\":%s,\"dsc\":%d,\"rt\":%.1f,\"tm\":\"%s\",\"rtok\":%s,"
     "\"ldr\":%d,\"mov\":%d,"
-    "\"hauto\":%s,\"hsp\":%d,\"heff\":%.1f,\"rman\":%s,\"hon\":%s,\"duty\":%.0f,"
+    "\"hauto\":%s,\"hsp\":%d,\"heff\":%.1f,\"rman\":%s,\"hon\":%s,\"duty\":%.0f,\"hcv\":%.2f,"
+    "\"dsb\":%d,\"bt\":%.1f,\"btok\":%s,\"btm\":\"%s\",\"swauto\":%s,\"bsp\":%d,\"sw2man\":%s,\"swon\":%s,\"hsww\":%.2f,"
+    "\"dsl\":%s,"
     "\"bed\":%s,\"p0m\":%d,\"p0on\":%s,\"pn\":%d,\"fd\":%d,\"lom\":%d,\"pon\":\"%s\",\"nr\":%d,\"ng\":%d,\"nb\":%d,"
     "\"gas\":%s,\"gcode\":%d}",
     room_id, SJALAY_VERSION,
@@ -721,10 +867,12 @@ String getJSON() {
     (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024),
     (unsigned)getCrashCount(), upt,
     ap_mode_active ? "true" : "false",
-    t2_j, t2_ok ? "true" : "false", h_j, dew, temp_ds, ds_ok ? "true" : "false", ds_count, room_temp, tm_esc,
+    t2_j, t2_ok ? "true" : "false", h_j, dew, temp_ds, ds_ok ? "true" : "false", ds_count, room_temp, tm_esc, room_temp_reliable ? "true" : "false",
     light_ldr, mov1_triggers,
     heating_auto ? "true" : "false", heating_setpoint, effective_setpoint,
-    relay_manual ? "true" : "false", heating_on ? "true" : "false", getDutyPercent(),
+    relay_manual ? "true" : "false", heating_on ? "true" : "false", getDutyPercent(), hyst_cv,
+    ds_boiler, temp_boiler, boiler_temp_reliable ? "true" : "false", btm_esc, sww_auto ? "true" : "false", boiler_setpoint, relay2_manual ? "true" : "false", sww_on ? "true" : "false", hyst_sww,
+    dsl,
     bed ? "true" : "false", pixel0_mode, pixel0_manual_on ? "true" : "false", pixels_num, fade_duration, light_on_min, pon,
     (int)neo_r, (int)neo_g, (int)neo_b,
     strlen(gas_url) > 0 ? "true" : "false", sheets_last_code);
@@ -741,8 +889,14 @@ void loadConfigFromNVS() {
   relay_manual     = preferences.getBool("relay_man", false);
   heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 10, 30);
   dew_margin       = preferences.getFloat("dew_margin", 2.0);
+  hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
   LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dark", 40), 0, 100);
   { String t = preferences.getString("gas_url", ""); strlcpy(gas_url, t.c_str(), sizeof(gas_url)); }
+
+  sww_auto        = preferences.getBool("sww_auto", false);
+  relay2_manual   = preferences.getBool("relay2_man", false);
+  boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), 40, 60);
+  hyst_sww        = constrain(preferences.getFloat("hyst_sww", 5.0), 0.5f, 15.0f);
 }
 
 void loadPixelConfigFromNVS() {
@@ -828,6 +982,32 @@ void handleStatus(AsyncWebServerRequest *request) {
     "<span class=\"dot\" style=\"background:%s\"></span> %s</td></tr>",
     heating_on ? "#e05c00" : "#bbb", heating_on ? "AAN" : "UIT");
   p->printf("<tr><td class=\"label\">Duty-cyclus (laatste 4u)</td><td class=\"value\" id=\"v-duty\" colspan=\"2\">%.0f %%</td></tr>", getDutyPercent());
+  p->printf("<tr><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hcv\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", hyst_cv);
+  p->print("</table>");
+
+  p->print("<div class=\"group-title\">SWW / boilerwater (relais 2, laadpomp)</div><table>");
+  p->printf("<tr><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-swauto\">%s</td>"
+    "<td class=\"control\"><form action=\"/toggle_sww_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
+    "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-swauto\"%s onchange=\"submitAjax(this.form);\">"
+    "<span class=\"slider-switch\"></span></label></form></td></tr>",
+    sww_auto ? "AAN" : "UIT", sww_auto ? " checked" : "");
+  p->printf("<tr><td class=\"label\">Relais 2 (handmatig)<br><span style=\"font-size:11px;color:#888;\">genegeerd in automatisch</span></td>"
+    "<td class=\"value\" id=\"v-sw2man\">%s</td>"
+    "<td class=\"control\"><form action=\"/toggle_relay2_manual\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
+    "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-sw2man\"%s onchange=\"submitAjax(this.form);\">"
+    "<span class=\"slider-switch\"></span></label></form></td></tr>",
+    relay2_manual ? "AAN" : "UIT", relay2_manual ? " checked" : "");
+  p->printf("<tr><td class=\"label\">Boiler-setpoint</td><td class=\"value\" id=\"v-bsp\">%d &deg;C</td>"
+    "<td class=\"control\"><form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
+    "<input type=\"range\" class=\"slider\" id=\"sl-bsp\" name=\"value\" min=\"40\" max=\"60\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
+    "</form></td></tr>", boiler_setpoint, boiler_setpoint);
+  p->printf("<tr><td class=\"label\">Boilertemperatuur (%s)</td><td class=\"value\" id=\"v-bt\" colspan=\"2\">%s</td></tr>",
+    ds_boiler >= 0 ? ds_nicknames[ds_boiler] : "geen sensor", boiler_temp_reliable ? (String(temp_boiler, 1) + " &deg;C").c_str() : "n.v.t.");
+  p->printf("<tr><td class=\"label\">SWW-pomp</td><td class=\"value\" id=\"v-swon\" colspan=\"2\">"
+    "<span class=\"dot\" style=\"background:%s\"></span> %s</td></tr>",
+    sww_on ? "#0077cc" : "#bbb", sww_on ? "AAN" : "UIT");
+  p->printf("<tr><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hsww\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", hyst_sww);
+  p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-btm\" colspan=\"2\" style=\"color:#e67e22;\">%s</td></tr>", boiler_melding);
   p->print("</table>");
 
   p->print("<div class=\"group-title\">HVAC (sensoren)</div><table>");
@@ -842,6 +1022,17 @@ void handleStatus(AsyncWebServerRequest *request) {
     ds_count > 0 ? ds_nicknames[ds_primary] : "-", ds_count > 0 ? (String(temp_ds, 1) + " &deg;C").c_str() : "n.v.t.");
   p->printf("<tr><td class=\"label\">Room temp (gebruikt)</td><td class=\"value\" id=\"v-rt\" colspan=\"2\">%.1f &deg;C</td></tr>", room_temp);
   p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-tm\" colspan=\"2\" style=\"color:#e67e22;\">%s</td></tr>", temp_melding);
+  p->print("</table>");
+
+  p->print("<div class=\"group-title\">Alle DS18B20-sensoren</div><table id=\"ds-all-table\">");
+  if (ds_count == 0) {
+    p->print("<tr><td class=\"label\" colspan=\"3\">Geen sensoren gevonden</td></tr>");
+  }
+  for (int i = 0; i < ds_count; i++) {
+    const char* role = (i == ds_primary) ? " (kamer)" : (i == ds_boiler) ? " (boiler)" : "";
+    p->printf("<tr><td class=\"label\">%s%s</td><td class=\"value\" colspan=\"2\" id=\"v-dsall-%d\">%s &deg;C%s</td></tr>",
+      ds_nicknames[i], role, i, String(temp_ds_arr[i], 1).c_str(), ds_fail_streak[i] >= DS_FAIL_THRESHOLD ? " &mdash; ontbreekt" : "");
+  }
   p->print("</table>");
 
   p->print("<div class=\"group-title\">Verlichting</div><table>");
@@ -952,6 +1143,18 @@ void handleStatus(AsyncWebServerRequest *request) {
         "if(g('v-t1'))g('v-t1').innerHTML=data.dsok?data.t1.toFixed(1)+' &deg;C':'n.v.t.';"
         "if(g('v-rt'))g('v-rt').innerHTML=data.rt.toFixed(1)+' &deg;C';"
         "if(g('v-tm'))g('v-tm').textContent=data.tm;"
+        "if(g('v-hcv'))g('v-hcv').textContent='±'+data.hcv.toFixed(1)+' °C';"
+        "if(g('v-hsww'))g('v-hsww').textContent='±'+data.hsww.toFixed(1)+' °C';"
+        "if(g('cb-swauto'))g('cb-swauto').checked=data.swauto;"
+        "if(g('v-swauto'))g('v-swauto').textContent=data.swauto?'AAN':'UIT';"
+        "if(g('cb-sw2man'))g('cb-sw2man').checked=data.sw2man;"
+        "if(g('v-sw2man'))g('v-sw2man').textContent=data.sw2man?'AAN':'UIT';"
+        "if(g('v-bsp'))g('v-bsp').textContent=data.bsp+' °C';"
+        "if(g('sl-bsp')&&document.activeElement.id!=='sl-bsp')g('sl-bsp').value=data.bsp;"
+        "if(g('v-bt'))g('v-bt').innerHTML=data.btok?data.bt.toFixed(1)+' &deg;C':'n.v.t.';"
+        "if(g('v-swon'))g('v-swon').innerHTML=dot(data.swon,'#0077cc')+' '+(data.swon?'AAN':'UIT');"
+        "if(g('v-btm'))g('v-btm').textContent=data.btm;"
+        "data.dsl.forEach(function(s,i){var e=g('v-dsall-'+i);if(e)e.innerHTML=s.t.toFixed(1)+' °C'+(s.ok?'':' &mdash; ontbreekt');});"
         "if(g('v-ldr'))g('v-ldr').textContent=data.ldr;"
         "if(g('v-mov'))g('v-mov').textContent=data.mov;"
         "if(g('v-gas'))g('v-gas').textContent=data.gas?'AAN (elke 5 min)':'UIT (geen URL ingesteld)';"
@@ -1018,6 +1221,8 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->print("<tr><td class=\"label\">Wi-Fi wachtwoord</td><td class=\"control\"><input type=\"password\" name=\"pass\" value=\"\" placeholder=\"(ongewijzigd laten = zelfde)\" maxlength=\"63\"></td></tr>");
   p->printf("<tr><td class=\"label\">Static IP (leeg = DHCP)</td><td class=\"control\"><input type=\"text\" name=\"ip\" value=\"%s\" maxlength=\"19\"></td></tr>", static_ip_str);
   p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)</td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"0\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
+  p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
+  p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
   p->printf("<tr><td class=\"label\">LDR donker-drempel (0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
   p->printf("<tr><td class=\"label\">Aantal pixels (1-30, herstart nodig)</td><td class=\"control\"><input type=\"number\" name=\"pnum\" min=\"1\" max=\"30\" value=\"%d\" style=\"width:60px;\"></td></tr>", pixels_num);
   p->printf("<tr><td class=\"label\">Google Script URL<br><span style=\"font-size:11px;color:#888;\">leeg = logging uit</span></td>"
@@ -1043,9 +1248,15 @@ void handleSettings(AsyncWebServerRequest *request) {
       temp_ds_arr[i], i, ds_nicknames[i]);
   }
   if (ds_count > 0) {
-    p->print("<tr><td class=\"label\">Primaire sensor</td><td class=\"control\"><select name=\"dsprimary\">");
+    p->print("<tr><td class=\"label\">Primaire sensor (kamer)</td><td class=\"control\"><select name=\"dsprimary\">");
     for (int i = 0; i < ds_count; i++) {
       p->printf("<option value=\"%d\"%s>%s</option>", i, i == ds_primary ? " selected" : "", ds_nicknames[i]);
+    }
+    p->print("</select></td></tr>");
+    p->print("<tr><td class=\"label\">Boilersensor<br><span style=\"font-size:11px;color:#888;\">stuurt SWW-relais, apart van kamersensor</span></td><td class=\"control\"><select name=\"dsboiler\">");
+    p->printf("<option value=\"-1\"%s>(geen)</option>", ds_boiler < 0 ? " selected" : "");
+    for (int i = 0; i < ds_count; i++) {
+      p->printf("<option value=\"%d\"%s>%s</option>", i, i == ds_boiler ? " selected" : "", ds_nicknames[i]);
     }
     p->print("</select></td></tr>");
   }
@@ -1090,6 +1301,14 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     dew_margin = constrain(dew_margin, 0.0f, 10.0f);
     preferences.putFloat("dew_margin", dew_margin);
   }
+  if (request->hasParam("hystcv")) {
+    hyst_cv = constrain(request->getParam("hystcv")->value().toFloat(), 0.2f, 5.0f);
+    preferences.putFloat("hyst_cv", hyst_cv);
+  }
+  if (request->hasParam("hystsww")) {
+    hyst_sww = constrain(request->getParam("hystsww")->value().toFloat(), 0.5f, 15.0f);
+    preferences.putFloat("hyst_sww", hyst_sww);
+  }
   if (request->hasParam("ldrdark")) {
     LDR_DARK_THRESHOLD = constrain(request->getParam("ldrdark")->value().toInt(), 0, 100);
     preferences.putInt("ldr_dark", LDR_DARK_THRESHOLD);
@@ -1133,6 +1352,11 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
   if (request->hasParam("dsprimary") && ds_count > 0) {
     int p = constrain(request->getParam("dsprimary")->value().toInt(), 0, ds_count - 1);
     preferences.putInt("ds_primary", p);
+  }
+  if (request->hasParam("dsboiler") && ds_count > 0) {
+    int b = request->getParam("dsboiler")->value().toInt();
+    b = (b < 0) ? -1 : constrain(b, 0, ds_count - 1);
+    preferences.putInt("ds_boiler", b);
   }
   preferences.end();
   request->send(200, "text/html",
@@ -1180,6 +1404,35 @@ void handleSetSetpoint(AsyncWebServerRequest *request) {
     preferences.putInt("heat_sp", heating_setpoint);
     preferences.end();
     updateHeatingLogic();
+  }
+  request->send(200, "text/plain", "OK");
+}
+
+void handleToggleSWWAuto(AsyncWebServerRequest *request) {
+  sww_auto = !sww_auto;
+  preferences.begin("sjalay-cfg", false);
+  preferences.putBool("sww_auto", sww_auto);
+  preferences.end();
+  updateSWWLogic();  // relais onmiddellijk aanpassen
+  request->send(200, "text/plain", "OK");
+}
+
+void handleToggleRelay2Manual(AsyncWebServerRequest *request) {
+  relay2_manual = !relay2_manual;
+  preferences.begin("sjalay-cfg", false);
+  preferences.putBool("relay2_man", relay2_manual);
+  preferences.end();
+  updateSWWLogic();
+  request->send(200, "text/plain", "OK");
+}
+
+void handleSetBoilerSetpoint(AsyncWebServerRequest *request) {
+  if (request->hasParam("value")) {
+    boiler_setpoint = constrain(request->getParam("value")->value().toInt(), 40, 60);
+    preferences.begin("sjalay-cfg", false);
+    preferences.putInt("boiler_sp", boiler_setpoint);
+    preferences.end();
+    updateSWWLogic();
   }
   request->send(200, "text/plain", "OK");
 }
@@ -1293,10 +1546,12 @@ void setup() {
   delay(1500);
   while (Serial.available()) Serial.read();
 
-  // === FAIL-SAFE: relais UIT vóór alles verder, incl. vóór Wi-Fi/NVS ===
+  // === FAIL-SAFE: beide relais UIT vóór alles verder, incl. vóór Wi-Fi/NVS ===
   pinMode(RELAY_PIN, OUTPUT);
   setRelay(false);
-  Serial.println("[RELAIS] Fail-safe: UIT bij boot.");
+  pinMode(RELAY2_PIN, OUTPUT);
+  setRelay2(false);
+  Serial.println("[RELAIS] Fail-safe: beide relais UIT bij boot.");
 
   printLastCrashOnBoot();
 
@@ -1366,7 +1621,8 @@ void setup() {
   updatePixelLogic();
   Serial.printf("Powerpixels: %d stuks geïnitialiseerd op IO%d\n", pixels_num, PIXEL_PIN);
 
-  updateHeatingLogic();  // pas geladen modus/schakelaar toe op het relais (nog steeds fail-safe UIT als niets gezet was)
+  updateHeatingLogic();  // pas geladen modus/schakelaar toe op relais 1 (nog steeds fail-safe UIT als niets gezet was)
+  updateSWWLogic();      // idem voor relais 2 (SWW-laadpomp)
 
   WiFi.mode(WIFI_STA);
   IPAddress local_ip;
@@ -1429,6 +1685,9 @@ void setup() {
   server.on("/toggle_heating_auto", HTTP_GET, handleToggleHeatingAuto);
   server.on("/toggle_relay_manual", HTTP_GET, handleToggleRelayManual);
   server.on("/set_setpoint", HTTP_GET, handleSetSetpoint);
+  server.on("/toggle_sww_auto", HTTP_GET, handleToggleSWWAuto);
+  server.on("/toggle_relay2_manual", HTTP_GET, handleToggleRelay2Manual);
+  server.on("/set_boiler_setpoint", HTTP_GET, handleSetBoilerSetpoint);
   server.on("/toggle_pixel_mode", HTTP_GET, handleTogglePixelMode);
   server.on("/toggle_pixel", HTTP_GET, handleTogglePixel);
   server.on("/setcolor", HTTP_GET, handleSetColor);
@@ -1544,6 +1803,7 @@ void loop() {
     last_sensor_read = millis();
     readAllSensors();
     updateHeatingLogic();
+    updateSWWLogic();
   }
 
   // Google Sheets: elke 5 min (HTTPS POST blokkeert kort, ~0.5-2s — aanvaardbaar op deze cadans)
