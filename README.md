@@ -2,7 +2,7 @@
 
 **Locatie:** Sjalay (Recht) — geen permanente WiFi/fiber, gevoed via 4G  
 **Basis:** ESP32-C6 + RoomSense shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
-**Laatst bijgewerkt:** 28 sep 2026
+**Laatst bijgewerkt:** 29 sep 2026
 
 Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vier dingen tegelijk in het vakantiehuis:
 
@@ -21,11 +21,11 @@ Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vi
 - **SWW-boiler:** CB-155/FB-155/TB-155, 155 liter, SN 1214
 - **Bediening:** BM 2744329 (wandmodule in de living, communiceert via eBUS)
 
-### 1.2 Aansluitpunt: E1-ingang op de ketel (gekozen)
+### 1.2 Aansluitpunt: E1-ingang op de ketel (gevonden en bevestigd ✅)
 
 De ketel heeft een parametreerbare, potentiaalvrije ingang **E1** op de klemmenstrook van de ketel zelf (niet op de BM-wandsokkel). De functie wordt bepaald door parameter **HG13** (fachmannebene, instelbereik 1–11).
 
-**Gekozen instelling: HG13 = 1 (Raumthermostat)** — dit is ook de fabrieksinstelling, dus vermoedelijk hoeft er niets gewijzigd te worden, enkel te bevestigen op de BM.
+**HG13 = 1 (Raumthermostat) — bevestigd op de BM (29/09) ✅** Vakmanniveau bereikt via: rechtse ronde knop indrukken → roteren naar "VAKMAN" → bevestigen → code invoeren (**code = 1**, staat in de Montageanleitung) → instellingen "Ketel" (Heizgerät) → HG13. Waarde stond effectief op **1**, dus fabrieksinstelling bevestigd, geen wijziging nodig geweest.
 
 | E1-toestand | Effect |
 |---|---|
@@ -34,6 +34,12 @@ De ketel heeft een parametreerbare, potentiaalvrije ingang **E1** op de klemmens
 
 Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed en blijft dus volledig door de BM zelf beheerd — precies zoals gewenst: verwarming op afstand sturen, SWW aan de BM overlaten.
 
+**Fysiek gevonden en elektrisch bevestigd (29/09):** op de klemmenstrook boven de regelmodule zit een rij van 4 klemblokjes (groen/geel/blauw/wit). Het **gele blokje** droeg enkel een kortsluitbrug en geen enkele sensor — de andere drie (groen/blauw/wit) hebben elk een echte 2-draads sensor erop aangesloten. Meting bevestigde dit definitief:
+- **Met brug: 0V** (kortgesloten = "gesloten" = verwarming toegelaten)
+- **Zonder brug: 5V** (zwevend/pull-up = "open" = verwarming geblokkeerd)
+
+Dit klopt exact met een potentiaalvrije logica-ingang met interne pull-up naar 5V — de ketel levert zelf de sensorspanning, het relais moet enkel kortsluiten/openen (nooit zelf spanning injecteren). **Het gele blokje is dus bevestigd als E1.**
+
 **Overwogen, niet gekozen:**
 - *HG13 = 2 (Maximalthermostat)* — zou bij open contact ook warmwater én vorstbeveiliging blokkeren. Te ingrijpend.
 - *Fernschaltkontakt op de BM-wandsokkel* (klemmen 3-4, potentiaalvrij) — functioneel gelijkaardig, maar stuurt altijd CV **en** SWW samen, niet apart regelbaar. Bewaard als alternatief/backup-aansluitpunt indien nodig, makkelijker bereikbaar (living i.p.v. ketelruimte).
@@ -41,13 +47,13 @@ Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wo
 
 **⚡ Bestaande brug over E1 — eerst verwijderen!**
 
-Op het elektrisch schema staat een fabrieks-/installateursbrug (kortsluitdraadje) over de E1-klemmen. Dat is normaal en logisch: zolang er geen extern toestel op E1 aangesloten is, moet de ketel toch gewoon kunnen verwarmen — de brug simuleert een permanent "gesloten contact", wat bij HG13=1 de normale "verwarming toegelaten"-toestand is.
+De brug simuleert momenteel een permanent "gesloten contact" (verwarming toegelaten), nodig zolang er geen extern sturingstoestel is aangesloten.
 
-**Belangrijk:** die brug moet **verwijderd** worden vóór je het relais aansluit. Het relais **parallel** naast de bestaande brug zetten werkt niet — een gesloten brug + eender welk relais ernaast blijft altijd "gesloten", en je Sjalay-sturing zou dan genegeerd worden. Knip/verwijder de brug en sluit in de plaats daarvan de twee relaisdraden aan op diezelfde twee E1-klemmen: het relais neemt dan volledig de rol van de brug over (gesloten = zoals de brug was = verwarming toegelaten; open = geblokkeerd).
+**Belangrijk:** die brug moet **verwijderd** worden vóór je het relais aansluit. Het relais **parallel** naast de bestaande brug zetten werkt niet — een gesloten brug + eender welk relais ernaast blijft altijd "gesloten", en je Sjalay-sturing zou dan genegeerd worden. Knip/verwijder de brug en sluit in de plaats daarvan de twee relaisdraden aan op diezelfde twee E1-klemmen (het gele blokje): het relais neemt dan volledig de rol van de brug over (gesloten = zoals de brug was = verwarming toegelaten; open = geblokkeerd).
 
 **Veiligheid — nooit vergeten:**
 - Nooit veiligheidscontacten (STB, maximumthermostaat, druk…) overbruggen
-- Galvanische scheiding via relais (optocoupler of degelijk relais)
+- Galvanische scheiding via relais (optocoupler of degelijk relais) — de ketel levert zelf de 5V, het relais mag geen eigen spanning op de lijn zetten
 - Relais **standaard open** (niet-bekrachtigd) gebruiken: bij stroomuitval, ESP-crash of vóór de Wi-Fi-verbinding staat, valt het systeem altijd terug naar de veilige "geblokkeerd"-toestand
 - Foto's maken van de volledige klemmenstrook vóór je iets loskoppelt
 
@@ -104,7 +110,6 @@ Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het 
 
 **Nog te doen:**
 - [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd` op de Pi)
-- [ ] Shelly-stopcontacten een vast IP geven in `192.168.50.x` en koppelen via `/settings` (zie 5.7)
 
 ---
 
@@ -196,6 +201,10 @@ Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `
 
 Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meeschakelen — lokaal, geen cloud. Formaat in Settings: `192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp`. Bij een effectieve aan/uit-wissel van de pixel stuurt de sketch `http://<ip>/relay/0?turn=on|off` (Gen1/2/3-compatibel), fire-and-forget met korte timeout. Geef elke Shelly een vast IP.
 
+**Uitgerold en bevestigd werkend (29/09):** 4 Shelly-stopcontacten gekoppeld en getest, vaste IP's toegekend in `192.168.50.x` (`.11`–`.14`) en gekoppeld via `/settings` (pixel 0 → 3 stopcontacten, pixel 1 → 1 stopcontact). Alles liep in één keer soepel.
+
+**Toekomstidee (niet gepland, nu niet nodig):** de Shelly's zijn Gen2/3-toestellen met Matter-ondersteuning en hebben dus ingebouwde vermogensmeting, opvraagbaar via `http://<ip>/rpc/Switch.GetStatus?id=0` (JSON met `apower` in W, `voltage`, `current`, `aenergy.total` in Wh — lokaal, geen cloud). Zou ooit gebruikt kunnen worden om stroom-/spanningsmeting per pixel te tonen (per Shelly of opgeteld), optioneel gelogd naar Sheets. Blijft voorlopig een idee, geen actieve to-do.
+
 ### 5.8 Gekende aandachtspunten
 
 - NVS-instellingen overleven firmware-updates (namespace `"sjalay-cfg"`); enkel factory reset wist alles
@@ -256,10 +265,12 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 
 ## 7. Openstaande punten
 
-- [ ] E1 fysiek lokaliseren op de ketel + HG13 bevestigen op 1 (waarschijnlijk al correct — fabrieksinstelling)
+- [x] E1 fysiek gelokaliseerd op de ketel (geel klemblokje) + elektrisch bevestigd (0V=gesloten/5V=open)
+- [x] HG13 op de BM nagekeken en bevestigd op waarde 1 (vakmancode = 1, uit Montageanleitung; 29/09)
 - [ ] **Bestaande brug over E1 verwijderen** vóór het relais aan te sluiten (zie 1.2)
 - [ ] **Vorstbeveiliging bij E1-open verifiëren** (installateur of Montageanleitung ketel) — kritiek voor een onbewoonde winterperiode
 - [ ] Relais-test met ESP32 (IO10) op de echte E1-klemmen
 - [ ] Definitieve montage (behuizing in de kelder)
-- [ ] Shelly-stopcontacten vast IP geven in `192.168.50.x` en koppelen via `/settings`
+- [x] Shelly-stopcontacten vast IP toegekend en gekoppeld via `/settings` (4 stuks, 29/09, meteen werkend)
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
+- [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
