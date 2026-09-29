@@ -1,13 +1,13 @@
 # Sjalay Controller — vakantiewoning op afstand monitoren en besturen (Recht)
 
 **Locatie:** Sjalay (Recht) — geen permanente WiFi/fiber, gevoed via 4G  
-**Basis:** ESP32-C6 + RoomSense shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
+**Basis:** ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
 **Laatst bijgewerkt:** 29 sep 2026
 
 Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vier dingen tegelijk in het vakantiehuis:
 
-1. **Verwarming op afstand aan/uit** — relais op de E1-ingang van de WOLF-ketel
-2. **Sensoren monitoren** — temperatuur, vocht, licht, beweging, met logging naar Google Sheets
+1. **Verwarming én SWW op afstand aan/uit** — relais 1 op de E1-ingang van de WOLF-ketel, relais 2 op de SWW-laadpomp
+2. **Sensoren monitoren** — temperatuur (meerdere DS18B20-rollen), vocht, licht, beweging, met logging naar Google Sheets
 3. **Verlichting aansturen** — powerpixels, optioneel gekoppeld aan Shelly-stopcontacten
 4. **Overal bereikbaar** — via Tailscale, zonder vaste internet-IP of poort-forwarding
 
@@ -32,7 +32,7 @@ De ketel heeft een parametreerbare, potentiaalvrije ingang **E1** op de klemmens
 | **Open** | Verwarming (Heizbetrieb) geblokkeerd — "Sommerbetrieb" |
 | **Gesloten** | Verwarming draait normaal, volgens het schema/setpoint van de BM |
 
-Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed en blijft dus volledig door de BM zelf beheerd — precies zoals gewenst: verwarming op afstand sturen, SWW aan de BM overlaten.
+Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed en blijft dus volledig door de BM zelf beheerd (behalve via de nieuwe laadpomp-aanpak, zie 1.4).
 
 **Fysiek gevonden en elektrisch bevestigd (29/09):** op de klemmenstrook boven de regelmodule zit een rij van 4 klemblokjes (groen/geel/blauw/wit). Het **gele blokje** droeg enkel een kortsluitbrug en geen enkele sensor — de andere drie (groen/blauw/wit) hebben elk een echte 2-draads sensor erop aangesloten. Meting bevestigde dit definitief:
 - **Met brug: 0V** (kortgesloten = "gesloten" = verwarming toegelaten)
@@ -41,41 +41,49 @@ Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wo
 Dit klopt exact met een potentiaalvrije logica-ingang met interne pull-up naar 5V — de ketel levert zelf de sensorspanning, het relais moet enkel kortsluiten/openen (nooit zelf spanning injecteren). **Het gele blokje is dus bevestigd als E1.**
 
 **Overwogen, niet gekozen:**
-- *HG13 = 2 (Maximalthermostat)* — zou bij open contact ook warmwater én vorstbeveiliging blokkeren. Te ingrijpend.
-- *Fernschaltkontakt op de BM-wandsokkel* (klemmen 3-4, potentiaalvrij) — functioneel gelijkaardig, maar stuurt altijd CV **en** SWW samen, niet apart regelbaar. Bewaard als alternatief/backup-aansluitpunt indien nodig, makkelijker bereikbaar (living i.p.v. ketelruimte).
-- *HG13 = 5–11* — specifieke technische functies (rookgasklep, circulatie, brandersperring, externe brandervraag, retourvoeler), niet geschikt als eenvoudige aan/uit-schakelaar.
+- *HG13 = 2 (Maximalthermostat)* — bij open contact blijft de brander volledig geblokkeerd, óók tijdens Schornsteinfeger-, kaskade- en **vorstbeveiligingsbedrijf**, voor zowel CV als SWW (letterlijk uit de manual: "Bei geöffnetem Kontakt bleibt der Brenner auch im Schornsteinfeger-, Kaskaden-, und Frostschutzbetrieb für Warmwasser und Heizung gesperrt"). **Bewust afgewezen (29/09):** dit zou onze fail-safe-logica omdraaien — de veilige rusttoestand van het relais (onbekrachtigd/open) zou dan net vorstbeveiliging uitschakelen, op het moment dat ze het hardst nodig is. Bovendien zouden CV en SWW dan aan hetzelfde signaal vastzitten.
+- *Fernschaltkontakt op de BM-wandsokkel* (klemmen 3-4, potentiaalvrij) — functioneel gelijkaardig, maar stuurt altijd CV **en** SWW samen, niet apart regelbaar. Bewaard als alternatief/backup-aansluitpunt.
+- *HG13 = 5–11* — specifieke technische functies, niet geschikt als eenvoudige aan/uit-schakelaar.
 
 **⚡ Bestaande brug over E1 — eerst verwijderen!**
 
-De brug simuleert momenteel een permanent "gesloten contact" (verwarming toegelaten), nodig zolang er geen extern sturingstoestel is aangesloten.
-
-**Belangrijk:** die brug moet **verwijderd** worden vóór je het relais aansluit. Het relais **parallel** naast de bestaande brug zetten werkt niet — een gesloten brug + eender welk relais ernaast blijft altijd "gesloten", en je Sjalay-sturing zou dan genegeerd worden. Knip/verwijder de brug en sluit in de plaats daarvan de twee relaisdraden aan op diezelfde twee E1-klemmen (het gele blokje): het relais neemt dan volledig de rol van de brug over (gesloten = zoals de brug was = verwarming toegelaten; open = geblokkeerd).
+De brug simuleert momenteel een permanent "gesloten contact" (verwarming toegelaten). Die brug moet **verwijderd** worden vóór je het relais aansluit — parallel zetten werkt niet, een gesloten brug + relais blijft altijd "gesloten". Knip/verwijder de brug en sluit in de plaats daarvan de twee relaisdraden aan op diezelfde twee E1-klemmen (het gele blokje).
 
 **Veiligheid — nooit vergeten:**
 - Nooit veiligheidscontacten (STB, maximumthermostaat, druk…) overbruggen
-- Galvanische scheiding via relais (optocoupler of degelijk relais) — de ketel levert zelf de 5V, het relais mag geen eigen spanning op de lijn zetten
-- Relais **standaard open** (niet-bekrachtigd) gebruiken: bij stroomuitval, ESP-crash of vóór de Wi-Fi-verbinding staat, valt het systeem altijd terug naar de veilige "geblokkeerd"-toestand
+- Galvanische scheiding via relais — de ketel levert zelf de 5V, het relais mag geen eigen spanning op de lijn zetten
+- Relais **standaard open** (niet-bekrachtigd): bij stroomuitval, ESP-crash of vóór de Wi-Fi-verbinding staat, valt het systeem altijd terug naar de veilige "geblokkeerd"-toestand
 - Foto's maken van de volledige klemmenstrook vóór je iets loskoppelt
 
 ### 1.3 Bedrijfsstrategie voor een vakantiewoning (belangrijk!)
 
 Uitgangspunt: een dure stookolieketel mag **niet blijven draaien terwijl er niemand is**, behalve voor vorstbeveiliging — maar bij aankomst/vertrek moet er wél volledige controle op afstand zijn, zonder dat iemand fysiek aan de BM moet komen.
 
-**Hoe dat met E1/HG13=1 werkt:**
+E1 is de **hoofdschakelaar** die alles overstijgt: zolang E1 **open** staat, blijft de verwarming geblokkeerd, ongeacht wat de BM's eigen klok/schema zegt.
 
-E1 is de **hoofdschakelaar** die alles overstijgt: zolang E1 **open** staat, blijft de verwarming geblokkeerd, ongeacht wat de BM's eigen klok/schema zegt ("unabhängig von einem digitalen Wolf-Regelungszubehör").
-
-⚠️ **Nog te verifiëren ter plaatse:** de HG13-tabel vermeldt bij optie 1 enkel dat de "Heizbetrieb" geblokkeerd wordt — in tegenstelling tot optie 2, die expliciet óók de vorstbeveiliging blokkeert. Dat suggereert sterk dat de **vorstbeveiliging actief blijft** ook met E1 open — maar bevestig dat expliciet (installateur vragen, of de Montageanleitung van de ketel zelf onder "Frostschutzfunktion" nakijken) vóór je hierop vertrouwt tijdens een koude, onbewoonde periode.
+**Vorstbeveiliging bevestigd (29/09) ✅** — de Kurzbedienungsanleitung van de BM vermeldt expliciet dat in "Sommerbetrieb (Heizung aus)" de **Pumpenstandschutz en Frostschutz actief blijven**. Onze E1-open-toestand (HG13=1) schakelt de ketel precies in dat Sommerbetrieb. Vorstbeveiliging blijft dus gegarandeerd actief in de veilige rusttoestand. Praktische wintertest blijft aangeraden.
 
 **Praktische regel — zo werkt het in gebruik:**
 
-1. **De BM-module blijft fysiek gewoon staan** op een normale, comfortabele instelling (Automatikbetrieb, gewoon dag/nacht-schema, comfortabele setpoint bv. 20°C). Er moet **nooit iemand aan de BM zelf** komen bij aankomst of vertrek.
-2. **Standaard (niemand aanwezig): E1 open** (relais uit) → verwarming geblokkeerd, vorstbeveiliging blijft actief (zie verificatiepunt hierboven).
-3. **Vóór aankomst:** relais **sluiten** via de Sjalay-webinterface — verwarming start en volgt vanaf dan gewoon het normale BM-schema/setpoint. Kan al enkele uren op voorhand, zodat het huis warm is bij aankomst.
-4. **Tijdens verblijf:** relais gesloten laten — dagelijkse temperatuurregeling gebeurt volledig door de BM zelf, zoals in elk gewoon huis.
-5. **Bij vertrek:** relais weer **openen** via de webinterface → terug naar geblokkeerd/vorstbeveiliging-only, zonder dat er iets aan de BM zelf moest gebeuren.
+1. **De BM-module blijft fysiek gewoon staan** op een normale, comfortabele instelling. Er moet **nooit iemand aan de BM zelf** komen bij aankomst of vertrek.
+2. **Standaard (niemand aanwezig): E1 open** (relais uit) → verwarming geblokkeerd, vorstbeveiliging blijft actief.
+3. **Vóór aankomst:** relais **sluiten** via de Sjalay-webinterface — verwarming start en volgt vanaf dan het normale BM-schema/setpoint.
+4. **Tijdens verblijf:** relais gesloten laten — dagelijkse regeling gebeurt door de BM zelf.
+5. **Bij vertrek:** relais weer **openen** via de webinterface.
 
-Zo wordt de BM een "domme" thermostaat die altijd hetzelfde comfortschema aanhoudt, en is E1 de enige externe aan/uit-knop — volledige afstandsbediening zonder de BM ooit te moeten herprogrammeren.
+Zo wordt de BM een "domme" thermostaat die altijd hetzelfde comfortschema aanhoudt, en is E1 de enige externe aan/uit-knop.
+
+### 1.4 SWW op afstand — tweede relais op de laadpomp (sketch klaar 29/09, nog fysiek te bedraden)
+
+E1/HG13=1 regelt enkel CV. Voor SWW werd overwogen: HG13=2 (**afgewezen**, zie 1.2 — breekt de vorstbeveiliging-fail-safe en koppelt CV/SWW onlosmakelijk aaneen). In de plaats: de **SWW-laadpomp** (Speicherladepumpe, de aparte 230V-circulatiepomp onder de CV-pomp op de ketel, die ketelwater naar de boilerwisselaar pompt) fysiek schakelen via een **tweede relais**. Zonder die pomp kan de ketel het tapwater niet opwarmen, ongeacht de BM-vraag.
+
+**Bedrading:** relais 2 van de bestaande 4-kanaals 230V/10A-relaismodule (optisch + galvanisch geïsoleerd, zie foto-bevestiging 29/09), aangestuurd via **IO2** (fysiek naast IO10 op de shield, handig voor de bekabeling — dit pin lag voorheen ongebruikt gereserveerd als "LDR2 analog"). Enkel de fasedraad van de laadpomp onderbreken, nul/aarde ongemoeid laten, NO-contact gebruiken (fail-safe: onbekrachtigd = pomp uit = SWW geblokkeerd, net als bij relais 1).
+
+**Nog aandachtspunt:** als de ketel deze pomp niet meer kan aansturen omdat de voeding fysiek weg is, kan de ketel z'n eigen Pumpenstandschutz/vorstbeveiligingslogica voor dát pompcircuit niet meer uitvoeren zolang het relais openstaat. Checken in de winter of dit een probleem vormt.
+
+**Regeling (sketch v0.11):** een eigen boilersensor (DS18B20, zie 5.10) en boiler-setpoint (40-60°C) sturen relais 2 automatisch aan, met dezelfde twee harde veiligheidslagen als de verwarming (bovengrens-cutoff + geen-betrouwbare-sensor-cutoff), ongeacht Auto/Handmatig — zie 5.10 voor het volledige ontwerp.
+
+**Status:** sketch-logica volledig gebouwd en meegenomen in v0.11 (zie hoofdstuk 5). Fysieke bedrading van relais 2 op de laadpomp en van de boilersensor op de T-bus-verlengdraad staat nog te gebeuren; pas daarna in bedrijf te nemen.
 
 ---
 
@@ -87,39 +95,38 @@ Zo wordt de BM een "domme" thermostaat die altijd hetzelfde comfortschema aanhou
 | Snelheid | ≈125/25 Mb/s |
 | Subnet Sjalay | **192.168.50.0/24** — gateway `.50.1`, DHCP-pool `.100–.199`, vaste IP's `.2–.99` |
 
-*Hernummerd van `192.168.1.0/24` op 28/09 — zie hoofdstuk 3 voor de reden (subnet-conflict met het thuisnetwerk in Zarlardinge, opgelost door Recht een eigen bereik te geven).*
+*Hernummerd van `192.168.1.0/24` op 28/09 — zie hoofdstuk 3 voor de reden.*
 
 ---
 
 ## 3. Toegang van buitenaf — Raspberry Pi + Tailscale
 
-Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het hele lokale Sjalay-netwerk (niet enkel de Pi) is zo van overal bereikbaar (mobiele data, elders wifi), zonder poort-forwarding of vast internet-IP.
+Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het hele lokale Sjalay-netwerk is zo van overal bereikbaar, zonder poort-forwarding of vast internet-IP.
 
 **Setup (28 sep 2026):**
-- Raspberry Pi OS 64-bit (Debian 13), geflashed via Raspberry Pi Imager, SSH + wachtwoord-auth ingeschakeld
-- Hostname `fidel` → bereikbaar via `fidel.local` (mDNS), onafhankelijk van IP/subnet
+- Raspberry Pi OS 64-bit (Debian 13), hostname `fidel` (mDNS: `fidel.local`)
 - Tailscale: `curl -fsSL https://tailscale.com/install.sh | sh`, dan `sudo tailscale up --advertise-routes=192.168.50.0/24 --accept-dns=false`
 - Route goedgekeurd in Tailscale-adminconsole (machine **rpi-fidel-sjalay**)
-- IP-forwarding ingeschakeld (`net.ipv4.ip_forward=1`, `net.ipv6.conf.all.forwarding=1`)
+- IP-forwarding ingeschakeld
 
-**Subnet-conflict opgelost:** het thuisnetwerk in Zarlardinge gebruikte hetzelfde `192.168.1.0/24` als het oorspronkelijke Sjalay-netwerk. Tailscale routeert per subnet/CIDR-blok, dus twee subnet-routers met exact hetzelfde bereik geven een conflict. Opgelost door Recht te hernummeren naar `192.168.50.0/24` (zie hoofdstuk 2) — het thuisnetwerk bleef ongewijzigd.
+**Subnet-conflict opgelost:** het thuisnetwerk in Zarlardinge gebruikte hetzelfde `192.168.1.0/24`. Opgelost door Recht te hernummeren naar `192.168.50.0/24`.
 
-**Resultaat:** bevestigd werkend — de Sjalay-webinterface is bereikbaar vanaf een iPhone met wifi uitgeschakeld (enkel mobiele data), via de Tailscale-app.
+**Resultaat:** bevestigd werkend — bereikbaar vanaf een iPhone met wifi uitgeschakeld, via de Tailscale-app.
 
-**Thuis (Zarlardinge):** er draait daar al een aparte Tailscale-subnet-router (`rpi-raspberrypi-zarlar`, met Funnel voor een publiek-bereikbare dienst). Omschakeling naar dezelfde subnet-router-aanpak staat gepland — stappen daarvoor in een apart to-do-document ("Tailscale subnet router — Zarlar RPi").
+**Thuis (Zarlardinge):** aparte Tailscale-subnet-router (`rpi-raspberrypi-zarlar`, met Funnel). Omschakeling gepland — apart to-do-document.
 
 **Nog te doen:**
 - [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd` op de Pi)
 
 ---
 
-## 4. Hardware — RoomSense shield pinout (ESP32-C6)
+## 4. Hardware — shield pinout (ESP32-C6)
 
 | Pin | Device/Functie | Gebruikt door Sjalay-sketch? |
 |-----|-----------------|-------------------------------|
 | IO13 | I2C SDA (pull-up 4.7k → 5V) | nee |
 | IO11 | I2C SCL (pull-up 4.7k → 5V) | nee |
-| IO3 | DS18B20 OneWire | **ja** — temperatuur |
+| IO3 | DS18B20 OneWire (T-bus + verlengdraad, meerdere sensoren parallel via uniek ROM-adres) | **ja** — temperatuur (kamer + boiler + evt. overige) |
 | IO4 | Pixels data | **ja** — powerpixels |
 | IO5 | PIR MOV1 | **ja** — beweging |
 | IO6 | DHT22 data | **ja** — temp/vocht |
@@ -128,20 +135,20 @@ Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het 
 | IO1 | LDR1 analog (10k pull-up → 3V3) | **ja** — licht |
 | IO18 | CO2 PWM input (MH-Z19, 5V!) | nee |
 | IO19 | MOV2 PIR (of Dotstar CLK) | nee |
-| **IO10** | **TSTAT switch (Gnd = ON)** | **ja — relais → WOLF E1** |
-| IO2 | LDR2 analog | nee |
-| **IO15** | Reserve 2 (Output) | gereserveerd (evt. 2e relais) |
+| **IO10** | **TSTAT switch (Gnd = ON)** | **ja — relais 1 → WOLF E1** |
+| **IO2** | (was: LDR2 analog, ongebruikt) | **ja (v0.11) — relais 2 → SWW-laadpomp** (zie 1.4) |
+| IO15 | Reserve 2 (Output) | vrije reserve (was eerst gepland voor relais 2, IO2 gekozen i.p.v. wegens bedradingsgemak) |
 | IO20/WKP | Reserve 3 | nee |
 | IO0 | Reserve 1 (BOOT pin) | nee — liever niet gebruiken |
 | GND / VIN / 3V3 | Voeding | — |
 
-IO10 is fail-safe-laag (`RELAY_ACTIVE_LOW`) en staat vóór Wi-Fi-verbinding al UIT in `setup()`.
+Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verbinding al UIT in `setup()`.
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.10, 28 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.11, 29 sep 2026)
 
-Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.10_...ino`) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.11.ino`) de bron van waarheid; dit is een leeswijzer erbij.
 
 ### 5.1 Bestand en board-instellingen
 
@@ -159,9 +166,12 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.10_...ino`) de bron v
 | `/factory_reset` | wist alle NVS-instellingen, herstart |
 | `/clear_crash_log` | wist crash-teller |
 | `/rescan_ds` | herscant DS18B20-bus |
-| `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming |
-| `/toggle_relay_manual` | wisselt relaisstand (handmatige modus) |
-| `/set_setpoint?value=` | setpoint-slider (10-30 °C) |
+| `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming (relais 1) |
+| `/toggle_relay_manual` | wisselt relais-1-stand (handmatige modus) |
+| `/set_setpoint?value=` | verwarmings-setpoint-slider (10-30 °C) |
+| `/toggle_sww_auto` **(v0.11)** | wisselt Automatisch/Handmatig voor SWW (relais 2) |
+| `/toggle_relay2_manual` **(v0.11)** | wisselt relais-2-stand (handmatige modus) |
+| `/set_boiler_setpoint?value=` **(v0.11)** | boiler-setpoint-slider (40-60 °C) |
 | `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL |
 | `/toggle_pixel?idx=` | pixel `idx` aan/uit |
 | `/setcolor?r=&g=&b=` | powerpixel-kleur |
@@ -173,15 +183,19 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.10_...ino`) de bron v
 
 ### 5.3 Settings-velden
 
-- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
+- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, **hysterese verwarming (v0.11)**, **hysterese SWW (v0.11)**, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
 - **Pixel-namen:** naam + optioneel Shelly-koppeling (`ip:nickname,ip:nickname`, max 3) per pixel
-- **Sensoren (DS18B20):** nickname per sensor + keuze primaire sensor
+- **Sensoren (DS18B20):** nickname per sensor, keuze **primaire sensor (kamer)**, keuze **boilersensor (v0.11, apart, optie "geen")**
 - Los: herscan DS18B20-bus, crash-log wissen, factory reset
 
-### 5.4 Verwarmingslogica
+### 5.4 Verwarmingslogica (relais 1) — v0.11: echte hysterese + veiligheidslagen
 
-- **Automatisch:** `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`; relais aan als `room_temp < effective_setpoint - 0.5`
+- **Automatisch:** `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`; **symmetrische hysteresisband** rond die effectieve setpoint: AAN onder `effective_setpoint - hyst_cv/2`, UIT boven `effective_setpoint + hyst_cv/2`, ertussen blijft de stand behouden. Default `hyst_cv = 1,0°C`, instelbaar in Settings (0,2-5°C).
+  - *Vóór v0.11* was er enkel een vaste `-0,5°C`-offset zonder aparte uitschakeldrempel → geen echte band → pendelde constant bij grenswaarden. Dat is hiermee gefixt.
 - **Handmatig:** relais volgt rechtstreeks de `/toggle_relay_manual`-schakelaar
+- **Veiligheidslagen (v0.11, ALTIJD actief, ongeacht Auto/Handmatig):**
+  1. Geforceerd UIT zodra `room_temp` de bovengrens van de setpoint-slider bereikt (**30°C**)
+  2. Geforceerd UIT bij onbetrouwbare temperatuurdata (kamer-DS én DHT22 beide defect/ontbrekend)
 - Relais wordt **onmiddellijk** aangepast bij elke wijziging
 - **Duty-cyclus:** 4-uur sliding window (12 × 20 min), zichtbaar in UI en `/json`/Sheets
 
@@ -195,15 +209,15 @@ Pixels 1+ zijn altijd rechtstreeks manueel, persistent, zonder bed-override.
 
 ### 5.6 Google Sheets-logging
 
-Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload. Laatste resultaatcode (`gcode`) zichtbaar in UI.
+Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload (nu inclusief alle nieuwe SWW/boiler-velden, zie hoofdstuk 6). Laatste resultaatcode (`gcode`) zichtbaar in UI.
 
 ### 5.7 Shelly-stopcontacten per pixel
 
-Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meeschakelen — lokaal, geen cloud. Formaat in Settings: `192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp`. Bij een effectieve aan/uit-wissel van de pixel stuurt de sketch `http://<ip>/relay/0?turn=on|off` (Gen1/2/3-compatibel), fire-and-forget met korte timeout. Geef elke Shelly een vast IP.
+Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meeschakelen — lokaal, geen cloud. Formaat in Settings: `192.168.50.11:Keukenlamp,192.168.50.12:Tafellamp`. Bij een effectieve aan/uit-wissel van de pixel stuurt de sketch `http://<ip>/relay/0?turn=on|off` (Gen1/2/3-compatibel), fire-and-forget met korte timeout.
 
-**Uitgerold en bevestigd werkend (29/09):** 4 Shelly-stopcontacten gekoppeld en getest, vaste IP's toegekend in `192.168.50.x` (`.11`–`.14`) en gekoppeld via `/settings` (pixel 0 → 3 stopcontacten, pixel 1 → 1 stopcontact). Alles liep in één keer soepel.
+**Uitgerold en bevestigd werkend (29/09):** 4 Shelly-stopcontacten gekoppeld en getest, vaste IP's toegekend in `192.168.50.x` (`.11`–`.14`).
 
-**Toekomstidee (niet gepland, nu niet nodig):** de Shelly's zijn Gen2/3-toestellen met Matter-ondersteuning en hebben dus ingebouwde vermogensmeting, opvraagbaar via `http://<ip>/rpc/Switch.GetStatus?id=0` (JSON met `apower` in W, `voltage`, `current`, `aenergy.total` in Wh — lokaal, geen cloud). Zou ooit gebruikt kunnen worden om stroom-/spanningsmeting per pixel te tonen (per Shelly of opgeteld), optioneel gelogd naar Sheets. Blijft voorlopig een idee, geen actieve to-do.
+**Toekomstidee (niet gepland, nu niet nodig):** Shelly's (Gen2/3, Matter) hebben ingebouwde vermogensmeting via `http://<ip>/rpc/Switch.GetStatus?id=0` — zou ooit stroom-/spanningsmeting per pixel kunnen tonen. Blijft een idee, geen actieve to-do.
 
 ### 5.8 Gekende aandachtspunten
 
@@ -225,6 +239,31 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.8 | DS18B20-nicknames/primaire sensor, LDR-drempel instelbaar, duty-cyclus 4u |
 | v0.9 | Bugfix bed-modus/pixel-0-interactie zichtbaar in UI |
 | v0.10 | Optionele Shelly-stopcontacten per pixel |
+| **v0.11** | **SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese ingevoerd voor beide circuits (default 1,0°C CV / 5,0°C SWW, instelbaar); twee veiligheidslagen (bovengrens-cutoff + onbetrouwbare-sensor-cutoff) altijd actief ongeacht modus; alle DS18B20's zichtbaar met naam+temp op Status/`json`; sensor pas "ontbrekend" na 3 opeenvolgende mislukte lezingen** |
+
+### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp (nieuw in v0.11)
+
+**Aanleiding:** naast de bestaande kamersensor (DS18B20, UTP/RoomSense) test je een tweede DS18B20 in de T-bus-stekker uit (voorlopig kelder/ESP-box-temp, evt. later daar vast te solderen) — en er komt een **boilersensor** bij op een verlengdraad, parallel op dezelfde OneWire-bus. Elke DS18B20 heeft een uniek 64-bit ROM-adres, dus nicknames/rollen blijven correct gekoppeld ongeacht hoeveel sensoren er bijkomen.
+
+**Sensorrollen (Settings):**
+- **Primaire sensor (kamer)** — bestond al, stuurt relais 1
+- **Boilersensor (v0.11, nieuw)** — apart instelbaar, stuurt relais 2; optie "(geen)" mogelijk
+- Sensoren zonder rol (bv. de T-bus/kelder-testsensor) krijgen gewoon geen speciale functie, maar staan wel mee in de "Alle DS18B20-sensoren"-lijst op Status/`json`
+
+**Boiler-setpoint:** nieuwe slider (Status-pagina), 40-60°C, default 40°C, stappen van 1°C. Stuurt relais 2 automatisch aan (Auto-modus).
+
+**Hysterese (beide circuits, v0.11):** een echte symmetrische band rond de setpoint i.p.v. de vroegere vaste `-0,5°C`-offset (die geen aparte uitschakeldrempel had en dus constant pendelde). Default **1,0°C** voor verwarming, **5,0°C** voor SWW (grotere boilermassa = trager systeem, minder pompcycli nodig) — beide instelbaar in Settings.
+
+**Terugvalketen bij ontbrekende sensor:**
+- **Kamer:** primaire DS18B20 ontbreekt/defect → terugval op DHT22 → als die **ook** defect is: geen betrouwbare data meer → relais 1 geforceerd UIT
+- **Boiler:** geen terugval mogelijk (geen alternatieve sensor voor boilerwater) → boilersensor ontbreekt/defect → relais 2 geforceerd UIT
+- Detectie pas na **3 opeenvolgende mislukte lezingen** (CRC-fout of buiten geldig bereik), zodat een toevallige glitch niet meteen de verwarming/SWW stilzet
+
+**Twee onafhankelijke veiligheidslagen, voor BEIDE relais, ALTIJD actief (ongeacht Auto/Handmatig):**
+1. **Bovengrens-cutoff:** geforceerd UIT zodra de gemeten temperatuur de bovengrens van de bijhorende setpoint-slider bereikt (30°C kamer, 60°C boiler) — voorkomt dat een vergeten "Handmatig AAN" de temperatuur ongelimiteerd laat oplopen
+2. **Sensor-betrouwbaarheid-cutoff:** geforceerd UIT bij een ontbrekende/defecte (en niet-terugvalbare) sensor
+
+Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
 ---
 
@@ -246,15 +285,24 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 | `t2`/`t2ok` | float/bool | DHT22-temp + geldigheid |
 | `h` | float | DHT22-vochtigheid (%) |
 | `dp` | float | Dauwpunt (°C) |
-| `t1` | float | DS18B20 primaire temp |
+| `t1` | float | DS18B20 primaire (kamer) temp |
 | `dsok`/`dsc` | bool/int | DS18B20 gevonden? / aantal |
-| `rt` | float | Effectieve room_temp |
-| `tm` | string | Sensor-waarschuwing |
+| `rt` | float | Effectieve room_temp (na terugvalketen) |
+| `tm` | string | Sensor-waarschuwing (kamer) |
+| `rtok` | bool | **(v0.11)** Kamertemperatuur betrouwbaar? (false = verwarming geblokkeerd) |
 | `ldr` | int | Lichtwaarde 0-100 (100=donker) |
 | `mov` | int | PIR-triggers laatste minuut |
 | `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint |
-| `rman`/`hon` | bool/bool | Handmatige relaisstand / ketelvraag actief |
+| `rman`/`hon` | bool/bool | Handmatige relais-1-stand / ketelvraag actief |
 | `duty` | float | Duty-cyclus verwarming 4u (%) |
+| `hcv` | float | **(v0.11)** Hysteresisband verwarming (°C) |
+| `dsb` | int | **(v0.11)** Index van de boilersensor (-1 = geen) |
+| `bt`/`btok` | float/bool | **(v0.11)** Boilertemperatuur + betrouwbaarheid |
+| `btm` | string | **(v0.11)** SWW-sensor-waarschuwing |
+| `swauto`/`bsp` | bool/int | **(v0.11)** SWW auto? / boiler-setpoint |
+| `sw2man`/`swon` | bool/bool | **(v0.11)** Handmatige relais-2-stand / pomp actief |
+| `hsww` | float | **(v0.11)** Hysteresisband SWW (°C) |
+| `dsl` | array | **(v0.11)** Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
 | `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat |
 | `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd |
 | `pon` | string | Bitstring aan/uit-status per pixel |
@@ -267,10 +315,16 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 
 - [x] E1 fysiek gelokaliseerd op de ketel (geel klemblokje) + elektrisch bevestigd (0V=gesloten/5V=open)
 - [x] HG13 op de BM nagekeken en bevestigd op waarde 1 (vakmancode = 1, uit Montageanleitung; 29/09)
+- [x] Vorstbeveiliging bij E1-open bevestigd (Sommerbetrieb = Pumpenstandschutz + Frostschutz actief; 29/09) — praktische wintertest blijft aangeraden
 - [ ] **Bestaande brug over E1 verwijderen** vóór het relais aan te sluiten (zie 1.2)
-- [ ] **Vorstbeveiliging bij E1-open verifiëren** (installateur of Montageanleitung ketel) — kritiek voor een onbewoonde winterperiode
-- [ ] Relais-test met ESP32 (IO10) op de echte E1-klemmen
-- [ ] Definitieve montage (behuizing in de kelder)
+- [ ] Relais-1-test met ESP32 (IO10) op de echte E1-klemmen
 - [x] Shelly-stopcontacten vast IP toegekend en gekoppeld via `/settings` (4 stuks, 29/09, meteen werkend)
+- [x] **Sketch v0.11 gebouwd:** SWW-relais (IO2), boilersensor-rol, boiler-setpoint, hysterese (beide circuits), veiligheidslagen, alle-DS-sensoren-lijst (29/09)
+- [ ] **Relais 2 fysiek bedraden** op de SWW-laadpomp (230V, fasedraad, NO-contact) — zie 1.4
+- [ ] **Boilersensor fysiek bedraden** op de verlengdraad (parallel OneWire) en toewijzen in Settings
+- [ ] T-bus-testsensor (kelder/ESP-box) evt. definitief vastsolderen indien behouden
+- [ ] Na bedrading: hysterese-defaults (1,0°C CV / 5,0°C SWW) in de praktijk evalueren, bijstellen indien nodig
+- [ ] Pumpenstandschutz-risico voor de laadpomp checken in de winter (zie 1.4)
+- [ ] Definitieve montage (behuizing in de kelder)
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
