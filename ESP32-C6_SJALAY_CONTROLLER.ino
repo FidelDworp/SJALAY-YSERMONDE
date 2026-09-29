@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v0.14 — 29 sep 2026
+// SJALAY CONTROLLER — v0.15 — 29 sep 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -24,6 +24,18 @@
 //   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
 //   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
 //
+// v0.15  (29sep26): Bed-modus/nachtmodus toegevoegd aan de landingspagina, zodat gasten kunnen
+//                   voorkomen dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts
+//                   automatisch aangaat. Nieuwe ronde knop (🛏️, &#128719;), even groot als de
+//                   kleurkiezer (52px) en er onmiddellijk links naast geplaatst. Hergebruikt
+//                   volledig de bestaande bed-variabele/NVS-veld en het /toggle_bed-endpoint
+//                   (al aanwezig sinds v0.9, voordien enkel bereikbaar via /advanced) — geen
+//                   nieuwe backend-logica nodig, de bestaande updatePixelLogic() forceert
+//                   pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens
+//                   bed-modus getoond als "vergrendelde" tegel (maan-icoon, gedimd, geen
+//                   tik-actie) i.p.v. een tegel die een tik toch zou negeren, en de bed-knop
+//                   licht op (donkerblauw) zolang bed-modus actief is. Alles synct live mee via
+//                   het bestaande /json-veld "bed" (al aanwezig sinds v0.9).
 // v0.14  (29sep26): mDNS/Bonjour toegevoegd (<ESPmDNS.h>) — de controller is voortaan ook
 //                   bereikbaar via http://<naam>.local/ i.p.v. enkel het kale IP-adres.
 //                   Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"),
@@ -174,7 +186,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "0.14"
+#define SJALAY_VERSION "0.15"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -1027,8 +1039,12 @@ void handleLanding(AsyncWebServerRequest *request) {
     ".ltile.on .ic{filter:none;}"
     ".ltile .nm{font-size:11px;margin-top:4px;color:#555;text-align:center;line-height:1.2;}"
     ".ltile.on .nm{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4);}"
-    ".colorwrap{display:flex;align-items:center;justify-content:center;margin-top:10px;}"
+    ".ltile.locked{opacity:.55;cursor:default;}"
+    ".colorwrap{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:10px;}"
     ".colorwrap input[type=color]{width:52px;height:52px;border:none;border-radius:50%;padding:0;cursor:pointer;background:none;}"
+    ".bedbtn{width:52px;height:52px;border-radius:50%;border:2px solid #ccc;background:#fff;"
+    "font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}"
+    ".bedbtn.on{background:#2c3968;border-color:#2c3968;}"
     ".card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.15);padding:18px;text-align:center;margin-bottom:16px;}"
     ".card .ic{font-size:34px;}"
     ".card .big{font-size:40px;font-weight:bold;margin:6px 0 14px;}"
@@ -1049,12 +1065,24 @@ void handleLanding(AsyncWebServerRequest *request) {
   p->print("<div class=\"lights\" id=\"lights\">");
   char hexcol[8]; snprintf(hexcol, sizeof(hexcol), "#%02x%02x%02x", neo_r, neo_g, neo_b);
   for (int i = 0; i < pixels_num; i++) {
-    p->printf("<button type=\"button\" class=\"ltile%s\" id=\"lt-%d\" data-idx=\"%d\" style=\"background:%s\" "
-      "onclick=\"toggleLight(%d)\"><span class=\"ic\">&#128161;</span><span class=\"nm\">%s</span></button>",
-      pixel_on[i] ? " on" : "", i, i, pixel_on[i] ? hexcol : "#fff", i, pixel_nicknames[i]);
+    // Pixel 0 tijdens Bed-modus: "vergrendeld" getoond (maan-icoon, gedimd, geen tik-
+    // actie) i.p.v. een normale tegel die toch genegeerd wordt door de bestaande
+    // bed-logica in updatePixelLogic() - anders lijkt een tik ten onrechte niets te doen.
+    bool locked = (i == 0 && bed);
+    p->printf("<button type=\"button\" class=\"ltile%s%s\" id=\"lt-%d\" data-idx=\"%d\" style=\"background:%s\" "
+      "onclick=\"toggleLight(%d)\"><span class=\"ic\">%s</span><span class=\"nm\">%s</span></button>",
+      (!locked && pixel_on[i]) ? " on" : "", locked ? " locked" : "", i, i,
+      (!locked && pixel_on[i]) ? hexcol : "#fff", i,
+      locked ? "&#127769;" : "&#128161;", pixel_nicknames[i]);
   }
   p->print("</div>");
-  p->printf("<div class=\"colorwrap\"><input type=\"color\" id=\"colorPicker\" value=\"%s\" onchange=\"setNeoColor(this.value)\"></div>", hexcol);
+  // Bed-modus (nachtmodus): zelfde grootte als de kleurkiezer, links ernaast. Herbruikt de
+  // bestaande bed-variabele/NVS-veld en het /toggle_bed-endpoint (al aanwezig sinds v0.9,
+  // voorheen enkel op /advanced) - hier enkel een knop toegevoegd, geen nieuwe backend-logica.
+  p->printf("<div class=\"colorwrap\">"
+    "<button type=\"button\" id=\"bedToggle\" class=\"bedbtn%s\" onclick=\"toggleBed()\">&#128719;</button>"
+    "<input type=\"color\" id=\"colorPicker\" value=\"%s\" onchange=\"setNeoColor(this.value)\">"
+    "</div>", bed ? " on" : "", hexcol);
 
   // ---- Verwarming ----
   // IST (huidige, gemeten temperatuur) en SOLL (effectieve/gevraagde doeltemp, incl.
@@ -1092,8 +1120,10 @@ void handleLanding(AsyncWebServerRequest *request) {
   p->print("<script>"
     "function toHex(v){return ('0'+Math.round(v).toString(16)).slice(-2);}"
     "var lastHex='#ffffff';"
+    "var bedOn=false;"
     "function setVal(url,v){fetch(url+'?value='+v).then(refresh);}"
-    "function toggleLight(i){fetch('/toggle_pixel?idx='+i).then(refresh);}"
+    "function toggleLight(i){if(i==0&&bedOn)return;fetch('/toggle_pixel?idx='+i).then(refresh);}"
+    "function toggleBed(){fetch('/toggle_bed').then(refresh);}"
     "function setNeoColor(hex){"
       "var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);"
       "lastHex=hex;"
@@ -1102,11 +1132,15 @@ void handleLanding(AsyncWebServerRequest *request) {
       "fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{"
         "lastHex='#'+toHex(data.nr)+toHex(data.ng)+toHex(data.nb);"
         "if(document.activeElement.id!=='colorPicker')document.getElementById('colorPicker').value=lastHex;"
+        "bedOn=data.bed;"
+        "var bb=document.getElementById('bedToggle');if(bb)bb.className='bedbtn'+(bedOn?' on':'');"
         "for(var i=0;i<data.pn;i++){"
           "var t=document.getElementById('lt-'+i);if(!t)continue;"
-          "var on=data.pon.charAt(i)==='1';"
-          "t.className='ltile'+(on?' on':'');"
+          "var locked=(i==0&&bedOn);"
+          "var on=!locked&&data.pon.charAt(i)==='1';"
+          "t.className='ltile'+(on?' on':'')+(locked?' locked':'');"
           "t.style.background=on?lastHex:'#fff';"
+          "if(i==0){var ic=t.querySelector('.ic');if(ic)ic.innerHTML=locked?'&#127769;':'&#128161;';}"
         "}"
         "var vr=document.getElementById('v-rt');if(vr)vr.textContent=data.rtok?data.rt.toFixed(1)+'°':'n.v.t.';"
         "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+data.heff.toFixed(1)+'°)';"
