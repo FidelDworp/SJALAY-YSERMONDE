@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v0.13 — 29 sep 2026
+// SJALAY CONTROLLER — v0.14 — 29 sep 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -24,6 +24,17 @@
 //   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
 //   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
 //
+// v0.14  (29sep26): mDNS/Bonjour toegevoegd (<ESPmDNS.h>) — de controller is voortaan ook
+//                   bereikbaar via http://<naam>.local/ i.p.v. enkel het kale IP-adres.
+//                   Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"),
+//                   opgeslagen in NVS ("mdns_name"), enkel a-z/0-9/streepjes toegelaten
+//                   (sanitizeMdnsName(): kleine letters geforceerd, ongeldige tekens weg,
+//                   geen leidend/sluitend streepje, terugval "sjalay" bij lege/ongeldige
+//                   invoer - een wijziging wordt dus nooit een onbruikbare hostnaam). mDNS
+//                   wordt gestart in setup() na een geslaagde Wi-Fi-verbinding (niet in
+//                   AP-setup-modus, daar is het kale 192.168.4.1 toch al vast); een nieuwe
+//                   naam vereist een herstart, net als de andere Settings-velden. Zichtbaar
+//                   op de Advanced-statuspagina (naast IP-adres) en in /json ("mdns").
 // v0.13  (29sep26): Landingspagina bijgeschaafd na feedback (2 rondes): (1) IST (huidige
 //                   gemeten temp) en SOLL (effectieve/gevraagde doeltemp) nu samen op één
 //                   lijn i.p.v. twee losse regels — groot IST eerst, in de kaartkleur
@@ -161,8 +172,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
 
-#define SJALAY_VERSION "0.13"
+#define SJALAY_VERSION "0.14"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -309,6 +321,7 @@ char room_id[32]       = "Sjalay";
 char wifi_ssid[64]     = "netwerknaam";
 char wifi_pass[64]     = "paswoord";
 char static_ip_str[20] = "192.168.xx.xx";
+char mdns_name[32]     = "sjalay";  // -> http://sjalay.local/, instelbaar in Settings
 char mac_address[20]   = "";
 
 bool ap_mode_active = false;
@@ -879,7 +892,7 @@ String getJSON() {
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
   char btm_esc[48]; strlcpy(btm_esc, boiler_melding, sizeof(btm_esc));  // idem tm_esc: geen quotes verwacht
   snprintf(buf, sizeof(buf),
-    "{\"rid\":\"%s\",\"ver\":\"%s\",\"ip\":\"%s\",\"rssi\":%d,"
+    "{\"rid\":\"%s\",\"ver\":\"%s\",\"ip\":\"%s\",\"mdns\":\"%s\",\"rssi\":%d,"
     "\"heap\":%u,\"lb\":%u,\"crash\":%u,\"upt\":%lu,\"ap\":%s,"
     "\"t2\":%.1f,\"t2ok\":%s,\"h\":%.1f,\"dp\":%.1f,\"t1\":%.1f,\"dsok\":%s,\"dsc\":%d,\"rt\":%.1f,\"tm\":\"%s\",\"rtok\":%s,"
     "\"ldr\":%d,\"mov\":%d,"
@@ -890,6 +903,7 @@ String getJSON() {
     "\"gas\":%s,\"gcode\":%d}",
     room_id, SJALAY_VERSION,
     ap_mode_active ? "192.168.4.1" : WiFi.localIP().toString().c_str(),
+    mdns_name,
     ap_mode_active ? 0 : WiFi.RSSI(),
     (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024),
     (unsigned)getCrashCount(), upt,
@@ -906,12 +920,30 @@ String getJSON() {
   return String(buf);
 }
 
+// mDNS-hostnamen mogen enkel a-z/0-9/streepjes bevatten (RFC-conform, en wat ESPmDNS
+// effectief accepteert): kleine letters forceren, ongeldige tekens weggooien, geen leidend/
+// sluitend streepje, "sjalay" als terugval bij een lege of volledig ongeldige invoer.
+void sanitizeMdnsName(String &v) {
+  v.trim();
+  v.toLowerCase();
+  String out = "";
+  for (size_t i = 0; i < v.length() && out.length() < 31; i++) {
+    char c = v[i];
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') out += c;
+  }
+  while (out.length() > 0 && out[0] == '-') out.remove(0, 1);
+  while (out.length() > 0 && out[out.length() - 1] == '-') out.remove(out.length() - 1, 1);
+  if (out.length() == 0) out = "sjalay";
+  v = out;
+}
+
 // ============== NVS: LADEN / OPSLAAN ==============
 void loadConfigFromNVS() {
   { String t = preferences.getString(NVS_ROOM_ID, "Sjalay"); strlcpy(room_id, t.c_str(), sizeof(room_id)); }
   { String t = preferences.getString(NVS_WIFI_SSID, "netwerknaam"); strlcpy(wifi_ssid, t.c_str(), sizeof(wifi_ssid)); }
   { String t = preferences.getString(NVS_WIFI_PASS, "paswoord"); strlcpy(wifi_pass, t.c_str(), sizeof(wifi_pass)); }
   { String t = preferences.getString(NVS_STATIC_IP, "192.168.xx.xx"); strlcpy(static_ip_str, t.c_str(), sizeof(static_ip_str)); }
+  { String t = preferences.getString("mdns_name", "sjalay"); strlcpy(mdns_name, t.c_str(), sizeof(mdns_name)); }
   heating_auto     = preferences.getBool("heat_auto", false);
   relay_manual     = preferences.getBool("relay_man", false);
   heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 10, 30);
@@ -1108,6 +1140,8 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->print("<div class=\"group-title\">Controller</div><table>");
   p->printf("<tr><td class=\"label\">IP-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
     ap_mode_active ? "192.168.4.1 (AP-modus)" : WiFi.localIP().toString().c_str());
+  p->printf("<tr><td class=\"label\">mDNS-naam</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
+    ap_mode_active ? "n.v.t. (AP-modus)" : (String("http://") + mdns_name + ".local/").c_str());
   p->printf("<tr><td class=\"label\">Wi-Fi RSSI</td><td class=\"value\" id=\"v-rssi\" colspan=\"2\">%d dBm</td></tr>", ap_mode_active ? 0 : WiFi.RSSI());
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>", mac_address);
   p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
@@ -1377,6 +1411,8 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Wi-Fi SSID</td><td class=\"control\"><input type=\"text\" name=\"ssid\" value=\"%s\" maxlength=\"63\"></td></tr>", wifi_ssid);
   p->print("<tr><td class=\"label\">Wi-Fi wachtwoord</td><td class=\"control\"><input type=\"password\" name=\"pass\" value=\"\" placeholder=\"(ongewijzigd laten = zelfde)\" maxlength=\"63\"></td></tr>");
   p->printf("<tr><td class=\"label\">Static IP (leeg = DHCP)</td><td class=\"control\"><input type=\"text\" name=\"ip\" value=\"%s\" maxlength=\"19\"></td></tr>", static_ip_str);
+  p->printf("<tr><td class=\"label\">mDNS-naam<br><span style=\"font-size:11px;color:#888;\">enkel a-z/0-9/streepjes, herstart nodig</span></td>"
+    "<td class=\"control\"><input type=\"text\" name=\"mdns\" value=\"%s\" maxlength=\"31\"> .local</td></tr>", mdns_name);
   p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)</td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"0\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
   p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
   p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
@@ -1452,6 +1488,11 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
   if (request->hasParam("ip")) {
     String v = request->getParam("ip")->value();
     preferences.putString(NVS_STATIC_IP, v.length() > 0 ? v : String("192.168.xx.xx"));
+  }
+  if (request->hasParam("mdns")) {
+    String v = request->getParam("mdns")->value();
+    sanitizeMdnsName(v);  // altijd geldig na sanitize (terugval "sjalay" bij lege/ongeldige invoer)
+    preferences.putString("mdns_name", v);
   }
   if (request->hasParam("dew")) {
     dew_margin = request->getParam("dew")->value().toFloat();
@@ -1746,6 +1787,7 @@ void setup() {
     preferences.putString(NVS_WIFI_SSID, "netwerknaam");
     preferences.putString(NVS_WIFI_PASS, "paswoord");
     preferences.putString(NVS_STATIC_IP, "192.168.xx.xx");
+    preferences.putString("mdns_name", "sjalay");
     preferences.putUChar("neo_r", 255);
     preferences.putUChar("neo_g", 255);
     preferences.putUChar("neo_b", 255);
@@ -1829,6 +1871,16 @@ void setup() {
     ap_mode_active = true;
     dnsServer.start(DNS_PORT, "*", ap_ip);
     Serial.println("DNS captive portal actief");
+  }
+
+  // === mDNS (Bonjour) — enkel zinvol met een echte Wi-Fi-verbinding, niet in AP-setup-modus ===
+  if (!ap_mode_active) {
+    if (MDNS.begin(mdns_name)) {
+      MDNS.addService("http", "tcp", 80);
+      Serial.printf("[mDNS] actief: http://%s.local/\n", mdns_name);
+    } else {
+      Serial.println("[mDNS] starten mislukt");
+    }
   }
 
   setenv("TZ", "CET-1CEST,M3.5.0/02,M10.5.0/03", 1);
