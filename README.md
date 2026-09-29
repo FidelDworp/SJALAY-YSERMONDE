@@ -146,19 +146,19 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.11, 29 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.12, 29 sep 2026)
 
-Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.11.ino`) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.12) de bron van waarheid; dit is een leeswijzer erbij.
 
 ### 5.1 Bestand en board-instellingen
 
 - Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB, **Partition Scheme** = Custom (`partitions.csv`), **USB CDC On Boot** = Enabled
 - `#define Serial Serial0` bovenaan — verplicht op de C6
-- Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep) en `/json` (`ver`)
+- Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep op `/advanced`) en `/json` (`ver`)
 
 ### 5.2 Webinterface — pagina's en endpoints
 
-**Pagina's:** `/` (Status), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
+**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data).
 
 | Endpoint | Werking |
 |---|---|
@@ -168,13 +168,13 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.11.ino`) de bron van 
 | `/rescan_ds` | herscant DS18B20-bus |
 | `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming (relais 1) |
 | `/toggle_relay_manual` | wisselt relais-1-stand (handmatige modus) |
-| `/set_setpoint?value=` | verwarmings-setpoint-slider (10-30 °C) |
-| `/toggle_sww_auto` **(v0.11)** | wisselt Automatisch/Handmatig voor SWW (relais 2) |
-| `/toggle_relay2_manual` **(v0.11)** | wisselt relais-2-stand (handmatige modus) |
-| `/set_boiler_setpoint?value=` **(v0.11)** | boiler-setpoint-slider (40-60 °C) |
+| `/set_setpoint?value=` | verwarmings-setpoint-slider (10-30 °C) — ook gebruikt door de landingspagina |
+| `/toggle_sww_auto` | wisselt Automatisch/Handmatig voor SWW (relais 2) |
+| `/toggle_relay2_manual` | wisselt relais-2-stand (handmatige modus) |
+| `/set_boiler_setpoint?value=` | boiler-setpoint-slider (40-60 °C) — ook gebruikt door de landingspagina |
 | `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL |
-| `/toggle_pixel?idx=` | pixel `idx` aan/uit |
-| `/setcolor?r=&g=&b=` | powerpixel-kleur |
+| `/toggle_pixel?idx=` | pixel `idx` aan/uit — **v0.12:** `idx=0` schakelt impliciet naar MANUEEL als hij nog in AUTO stond (relevant voor de landingspagina; geen gedragswijziging op `/advanced`) |
+| `/setcolor?r=&g=&b=` | powerpixel-kleur — ook gebruikt door de landingspagina |
 | `/set_fade_duration?value=` | dim-snelheid (1-10 s) |
 | `/set_light_on_min?value=` | licht-aan tijd na PIR (0-30 min) |
 | `/toggle_bed` | bed-modus (dwingt pixel 0 uit) |
@@ -183,17 +183,16 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.11.ino`) de bron van 
 
 ### 5.3 Settings-velden
 
-- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, **hysterese verwarming (v0.11)**, **hysterese SWW (v0.11)**, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
+- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), dauwpuntmarge, hysterese verwarming, hysterese SWW, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
 - **Pixel-namen:** naam + optioneel Shelly-koppeling (`ip:nickname,ip:nickname`, max 3) per pixel
-- **Sensoren (DS18B20):** nickname per sensor, keuze **primaire sensor (kamer)**, keuze **boilersensor (v0.11, apart, optie "geen")**
+- **Sensoren (DS18B20):** nickname per sensor, keuze **primaire sensor (kamer)**, keuze **boilersensor (apart, optie "geen")**
 - Los: herscan DS18B20-bus, crash-log wissen, factory reset
 
-### 5.4 Verwarmingslogica (relais 1) — v0.11: echte hysterese + veiligheidslagen
+### 5.4 Verwarmingslogica (relais 1) — echte hysterese + veiligheidslagen
 
 - **Automatisch:** `effective_setpoint = max(setpoint, dauwpunt + dew_margin)`; **symmetrische hysteresisband** rond die effectieve setpoint: AAN onder `effective_setpoint - hyst_cv/2`, UIT boven `effective_setpoint + hyst_cv/2`, ertussen blijft de stand behouden. Default `hyst_cv = 1,0°C`, instelbaar in Settings (0,2-5°C).
-  - *Vóór v0.11* was er enkel een vaste `-0,5°C`-offset zonder aparte uitschakeldrempel → geen echte band → pendelde constant bij grenswaarden. Dat is hiermee gefixt.
 - **Handmatig:** relais volgt rechtstreeks de `/toggle_relay_manual`-schakelaar
-- **Veiligheidslagen (v0.11, ALTIJD actief, ongeacht Auto/Handmatig):**
+- **Veiligheidslagen (ALTIJD actief, ongeacht Auto/Handmatig):**
   1. Geforceerd UIT zodra `room_temp` de bovengrens van de setpoint-slider bereikt (**30°C**)
   2. Geforceerd UIT bij onbetrouwbare temperatuurdata (kamer-DS én DHT22 beide defect/ontbrekend)
 - Relais wordt **onmiddellijk** aangepast bij elke wijziging
@@ -209,7 +208,7 @@ Pixels 1+ zijn altijd rechtstreeks manueel, persistent, zonder bed-override.
 
 ### 5.6 Google Sheets-logging
 
-Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload (nu inclusief alle nieuwe SWW/boiler-velden, zie hoofdstuk 6). Laatste resultaatcode (`gcode`) zichtbaar in UI.
+Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload. Laatste resultaatcode (`gcode`) zichtbaar in UI.
 
 ### 5.7 Shelly-stopcontacten per pixel
 
@@ -239,20 +238,21 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.8 | DS18B20-nicknames/primaire sensor, LDR-drempel instelbaar, duty-cyclus 4u |
 | v0.9 | Bugfix bed-modus/pixel-0-interactie zichtbaar in UI |
 | v0.10 | Optionele Shelly-stopcontacten per pixel |
-| **v0.11** | **SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese ingevoerd voor beide circuits (default 1,0°C CV / 5,0°C SWW, instelbaar); twee veiligheidslagen (bovengrens-cutoff + onbetrouwbare-sensor-cutoff) altijd actief ongeacht modus; alle DS18B20's zichtbaar met naam+temp op Status/`json`; sensor pas "ontbrekend" na 3 opeenvolgende mislukte lezingen** |
+| v0.11 | SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese voor beide circuits; twee veiligheidslagen altijd actief; alle DS18B20's zichtbaar; sensor pas "ontbrekend" na 3 mislukte lezingen |
+| **v0.12** | **Eenvoudige landingspagina op `/` voor gasten/huurders (grote licht-tegels + kleurkiezer, enkel setpoint+effectieve temp voor verwarming/SWW, geen Auto/Handmatig zichtbaar); forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina** |
 
-### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp (nieuw in v0.11)
+### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
 **Aanleiding:** naast de bestaande kamersensor (DS18B20, UTP/RoomSense) test je een tweede DS18B20 in de T-bus-stekker uit (voorlopig kelder/ESP-box-temp, evt. later daar vast te solderen) — en er komt een **boilersensor** bij op een verlengdraad, parallel op dezelfde OneWire-bus. Elke DS18B20 heeft een uniek 64-bit ROM-adres, dus nicknames/rollen blijven correct gekoppeld ongeacht hoeveel sensoren er bijkomen.
 
 **Sensorrollen (Settings):**
 - **Primaire sensor (kamer)** — bestond al, stuurt relais 1
-- **Boilersensor (v0.11, nieuw)** — apart instelbaar, stuurt relais 2; optie "(geen)" mogelijk
-- Sensoren zonder rol (bv. de T-bus/kelder-testsensor) krijgen gewoon geen speciale functie, maar staan wel mee in de "Alle DS18B20-sensoren"-lijst op Status/`json`
+- **Boilersensor** — apart instelbaar, stuurt relais 2; optie "(geen)" mogelijk
+- Sensoren zonder rol (bv. de T-bus/kelder-testsensor) krijgen gewoon geen speciale functie, maar staan wel mee in de "Alle DS18B20-sensoren"-lijst op `/advanced`/`json`
 
-**Boiler-setpoint:** nieuwe slider (Status-pagina), 40-60°C, default 40°C, stappen van 1°C. Stuurt relais 2 automatisch aan (Auto-modus).
+**Boiler-setpoint:** slider (op `/advanced`, en sinds v0.12 ook direct aanpasbaar op de landingspagina), 40-60°C, default 40°C, stappen van 1°C. Stuurt relais 2 automatisch aan (Auto-modus).
 
-**Hysterese (beide circuits, v0.11):** een echte symmetrische band rond de setpoint i.p.v. de vroegere vaste `-0,5°C`-offset (die geen aparte uitschakeldrempel had en dus constant pendelde). Default **1,0°C** voor verwarming, **5,0°C** voor SWW (grotere boilermassa = trager systeem, minder pompcycli nodig) — beide instelbaar in Settings.
+**Hysterese (beide circuits):** een echte symmetrische band rond de setpoint. Default **1,0°C** voor verwarming, **5,0°C** voor SWW (grotere boilermassa = trager systeem, minder pompcycli nodig) — beide instelbaar in Settings.
 
 **Terugvalketen bij ontbrekende sensor:**
 - **Kamer:** primaire DS18B20 ontbreekt/defect → terugval op DHT22 → als die **ook** defect is: geen betrouwbare data meer → relais 1 geforceerd UIT
@@ -265,11 +265,23 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 
 Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
+### 5.11 Eenvoudige landingspagina (nieuw in v0.12)
+
+**Aanleiding:** gasten/huurders hebben niets aan Auto/Handmatig-schakelaars, hysterese-instellingen of sensordiagnostiek — enkel licht aan/uit + kleur, en een comfortabele temperatuur voor verwarming/warm water, met zo weinig mogelijk tekst.
+
+- **`/`** is nu deze landingspagina (`handleLanding()`); de vroegere Status-pagina verhuisde **ongewijzigd** naar **`/advanced`** (`handleStatus()`, enkel het pad veranderde). Bereikbaar vanop de landingspagina via een klein tandwiel-icoon ⚙️ onderaan, zonder tekst.
+- **Verlichting:** grote tegels in een grid, één per pixel (inclusief pixel 0/MOV1) — icoon 💡, tegelkleur = de ingestelde RGB-kleur wanneer aan, grijs/wit wanneer uit, pixelnaam eronder. Aanraken = direct schakelen (`/toggle_pixel`). Eén kleurkiezer onder het grid voor de gedeelde RGB-kleur van alle pixels (`/setcolor`).
+  - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen.
+- **Verwarming/SWW:** telkens enkel een grote schuifregelaar (setpoint) met de effectieve/gevraagde temperatuur er groot bovenop, plus een klein statuslampje (ketelvraag/pomp actief) — géén Auto/Handmatig-schakelaar, géén los relais zichtbaar. Voor SWW is de "effectieve" temperatuur momenteel gelijk aan de setpoint (geen correctie zoals bij verwarming se dauwpunt), dus bewust maar **één** cijfer getoond i.p.v. het onnodig te dupliceren.
+- **Veiligheid:** bij **elke** keer dat `/` geladen wordt, worden beide regelkringen geforceerd naar Auto gezet — ook als iemand ze op `/advanced` bewust op Handmatig had gezet. NVS wordt enkel effectief beschreven bij een échte wissel (niet bij elke herlaad/refresh), om onnodige flash-writes te vermijden.
+- Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced`.
+- 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
+
 ---
 
 ## 6. JSON-velden (`/json`)
 
-Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min). Booleans als `true`/`false`.
+Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Google Sheets-log (elke 5min). Booleans als `true`/`false`.
 
 | Veld | Type | Beschrijving |
 |---|---|---|
@@ -289,22 +301,22 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 | `dsok`/`dsc` | bool/int | DS18B20 gevonden? / aantal |
 | `rt` | float | Effectieve room_temp (na terugvalketen) |
 | `tm` | string | Sensor-waarschuwing (kamer) |
-| `rtok` | bool | **(v0.11)** Kamertemperatuur betrouwbaar? (false = verwarming geblokkeerd) |
+| `rtok` | bool | Kamertemperatuur betrouwbaar? (false = verwarming geblokkeerd) |
 | `ldr` | int | Lichtwaarde 0-100 (100=donker) |
 | `mov` | int | PIR-triggers laatste minuut |
-| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint |
+| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint — `heff` voedt het grote cijfer op de landingspagina |
 | `rman`/`hon` | bool/bool | Handmatige relais-1-stand / ketelvraag actief |
 | `duty` | float | Duty-cyclus verwarming 4u (%) |
-| `hcv` | float | **(v0.11)** Hysteresisband verwarming (°C) |
-| `dsb` | int | **(v0.11)** Index van de boilersensor (-1 = geen) |
-| `bt`/`btok` | float/bool | **(v0.11)** Boilertemperatuur + betrouwbaarheid |
-| `btm` | string | **(v0.11)** SWW-sensor-waarschuwing |
-| `swauto`/`bsp` | bool/int | **(v0.11)** SWW auto? / boiler-setpoint |
-| `sw2man`/`swon` | bool/bool | **(v0.11)** Handmatige relais-2-stand / pomp actief |
-| `hsww` | float | **(v0.11)** Hysteresisband SWW (°C) |
-| `dsl` | array | **(v0.11)** Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
+| `hcv` | float | Hysteresisband verwarming (°C) |
+| `dsb` | int | Index van de boilersensor (-1 = geen) |
+| `bt`/`btok` | float/bool | Boilertemperatuur + betrouwbaarheid |
+| `btm` | string | SWW-sensor-waarschuwing |
+| `swauto`/`bsp` | bool/int | SWW auto? / boiler-setpoint — `bsp` voedt het grote cijfer op de landingspagina |
+| `sw2man`/`swon` | bool/bool | Handmatige relais-2-stand / pomp actief |
+| `hsww` | float | Hysteresisband SWW (°C) |
+| `dsl` | array | Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
 | `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat |
-| `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd |
+| `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd — `pn` bepaalt hoeveel licht-tegels de landingspagina tekent |
 | `pon` | string | Bitstring aan/uit-status per pixel |
 | `nr`/`ng`/`nb` | int | Huidige RGB-kleur |
 | `gas`/`gcode` | bool/int | Sheets-logging aan? / laatste HTTP-code |
@@ -327,4 +339,6 @@ Compact schema, gebruikt door live-UI (elke 3s) en Google Sheets-log (elke 5min)
 - [ ] Pumpenstandschutz-risico voor de laadpomp checken in de winter (zie 1.4)
 - [ ] Definitieve montage (behuizing in de kelder)
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
+- [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
+- [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel bijstellen
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
