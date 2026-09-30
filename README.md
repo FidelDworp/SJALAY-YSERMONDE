@@ -109,10 +109,7 @@ Uit de WOLF Regelung-R2-handleiding (§Fachmannebene Parameter, HG24 "Warmwasser
 
 **Neveneffect om bewust van te zijn:** zodra de fabriekssensor eraf is, heeft de ketel/BM zelf geen boilertemperatuur-uitlezing meer — zijn eigen interne weergave/logica voor SWW verdwijnt, want SF is dan puur een schakelaar. Geen probleem voor Sjalay: de eigen DS18B20-boilersensor blijft onafhankelijk de temperatuur meten/loggen/tonen op de landingspagina en `/advanced` — maar de ketel/BM zelf toont dan geen boilertemp meer, mocht daar ooit naar gekeken worden.
 
-**Nog te bevestigen op locatie:**
-1. HG24 raadpleegbaar/wijzigbaar bevestigen op de BM (Fachmannebene, code 1)
-
-**Status:** plan vastgelegd en volledig fysiek voorverkend (30/09) — fabriekssensor, klemlocatie én HG24-toegang alle drie bevestigd. Sketch-logica (v0.11) blijft ongewijzigd bruikbaar. Enkel de effectieve omschakeling (HG24 op 3, sensor loskoppelen, relais 2 aansluiten, herstarten) en toewijzing van de boilersensor in Settings staan nog te gebeuren; pas daarna in bedrijf te nemen.
+**Status:** plan vastgelegd en volledig fysiek voorverkend (30/09) — fabriekssensor, klemlocatie én HG24-toegang alle drie bevestigd (zie hierboven). Sketch-logica (v0.11) blijft ongewijzigd bruikbaar. Enkel de effectieve omschakeling (HG24 op 3, sensor loskoppelen, relais 2 aansluiten, herstarten) en toewijzing van de boilersensor in Settings staan nog te gebeuren; pas daarna in bedrijf te nemen.
 
 ### 1.5 Voor te bereiden thuis (Zarlardinge, vóór de volgende keer)
 
@@ -162,10 +159,11 @@ Uit de WOLF Regelung-R2-handleiding (§Fachmannebene Parameter, HG24 "Warmwasser
 
 | Onderdeel | Instelling |
 |---|---|
-| 4G-router | TP-Link Archer MR600 (Telenet ONE data-SIM, uit oude iPhone 5) |
+| 4G-router | TP-Link Archer MR600 (Telenet ONE data-SIM, uit oude iPhone 5) — lokaal IP `192.168.50.1` |
 | Snelheid | ≈125/25 Mb/s |
 | Subnet Sjalay | **192.168.50.0/24** — gateway `.50.1`, DHCP-pool `.100–.199`, vaste IP's `.2–.99` |
 | mDNS-naam controller | **sjalay.local** (default, instelbaar in Settings — zie 5.12) |
+| Vaste IP's toegekend | Raspberry Pi (Tailscale-router) `.2`; Sjalay-controller (ESP32) `.10`; Shelly-stopcontacten `.11`–`.14` |
 
 *Hernummerd van `192.168.1.0/24` op 28/09 — zie hoofdstuk 3 voor de reden.*
 
@@ -183,12 +181,29 @@ Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het 
 
 **Subnet-conflict opgelost:** het thuisnetwerk in Zarlardinge gebruikte hetzelfde `192.168.1.0/24`. Opgelost door Recht te hernummeren naar `192.168.50.0/24`.
 
-**Resultaat:** bevestigd werkend — bereikbaar vanaf een iPhone met wifi uitgeschakeld, via de Tailscale-app.
+**Resultaat:** bevestigd werkend — bereikbaar vanaf een iPhone met wifi uitgeschakeld, via de Tailscale-app (zowel de subnet-route naar het Sjalay-netwerk zelf — bv. de ESP32-landingspagina — als rechtstreekse SSH naar de Pi, zie 3.1).
 
-**Thuis (Zarlardinge):** aparte Tailscale-subnet-router (`rpi-raspberrypi-zarlar`, met Funnel). Omschakeling gepland — apart to-do-document.
+**Thuis (Zarlardinge) — zelfde aanpak nu ook daar actief (30/09) ✅:** naast de bestaande Funnel-opzet adverteert de Zarlar-Pi (`rpi-raspberrypi-zarlar`) sinds 30/09 ook het volledige lokale subnet `192.168.0.0/24` (`sudo tailscale up --advertise-routes=192.168.0.0/24 --accept-dns=false`, IP-forwarding aangezet via `/etc/sysctl.d/99-tailscale.conf`, route goedgekeurd in de Tailscale-adminconsole). Bevestigd bereikbaar van op afstand (mobiele data, wifi uit): alle lokale wifi-toestellen in Zarlardinge zijn nu net als in Recht rechtstreeks via hun `192.168.0.x`-adres bereikbaar, zonder per toestel iets te moeten instellen. Detailstappen en netwerkspecifieke achtergrond horen thuis in het aparte Zarlar-document, niet hier.
 
-**Nog te doen:**
-- [ ] Pi-wachtwoord wijzigen naar iets uniek (`passwd` op de Pi)
+### 3.1 SSH-toegang tot de Pi (bevestigd werkend, 30/09)
+
+**Adressen van de Pi:**
+- **Lokaal LAN-IP:** `192.168.50.2` — **vast ingesteld** (30/09), geen DHCP meer
+- **Tailscale-IP (vast, onafhankelijk van het lokale netwerk):** `100.77.122.107`
+- **Tailscale MagicDNS-naam:** `rpi-fidel-sjalay.tail3c7f42.ts.net`
+
+**SSH-login:** user `pi`, wachtwoord **`fidel2026`** (gewijzigd op 30/09 via `passwd` op de Pi zelf — het oude fabriekswachtwoord `raspberry` werkt niet meer). Termius-hostprofielen (zowel het lokale-IP- als het Tailscale-IP-profiel) zijn bijgewerkt en bevestigd werkend met het nieuwe wachtwoord.
+
+**Bevestigd (30/09):** zowel het Tailscale-IP als het lokale IP werken van op afstand — het Tailscale-subnetrouting-mechanisme functioneert prima. (Wat eerst leek op een subnet-route-probleem bleek gewoon een verouderd/verkeerd geraden lokaal IP in het Termius-host-profiel — geen Tailscale-fout.)
+
+**Lokaal IP vastgezet op `.2` (30/09):** de Pi kreeg voorheen een dynamisch DHCP-adres (was `.103`, binnen de pool `.100`-`.199`), wat kon wijzigen bij een lease-vernieuwing. Vastgezet via NetworkManager (deze Pi gebruikt netplan met NetworkManager als renderer — de `netplan-wlan0-sjalayke`-connectie is hier het gezag, niet de auto-gegenereerde `/etc/netplan/90-NM-*.yaml`-bestanden):
+```
+sudo nmcli con mod "netplan-wlan0-sjalayke" ipv4.addresses 192.168.50.2/24 ipv4.gateway 192.168.50.1 ipv4.dns 192.168.50.1 ipv4.method manual
+sudo nmcli con up "netplan-wlan0-sjalayke"
+```
+Bevestigd met `ip addr show wlan0` → `inet 192.168.50.2/24 ... valid_lft forever`. `.2` gekozen als eerste vrije adres net boven de gateway (`.1`), buiten het bereik van de ESP32/Shelly's (`.10`-`.14`) en de DHCP-pool.
+
+**Wachtwoord gewijzigd (30/09) ✅** — het fabriekswachtwoord `raspberry` is vervangen door `fidel2026` via `passwd` (rechtstreeks op de Pi, over SSH). Hiermee is het eerder gesignaleerde beveiligingsrisico (bekend/geraden fabriekswachtwoord bereikbaar vanop afstand via Tailscale) opgelost.
 
 ---
 
@@ -218,9 +233,11 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.15, 29 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v0.16, 30 sep 2026)
 
-Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.15) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.16.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.16) de bron van waarheid; dit is een leeswijzer erbij.
+
+**Getest op het thuisnetwerk (30/09) ✅** — controller naar fabrieksinstellingen gereset en op het Zarlardinge-netwerk gezet, met een volledige RoomSense-shield via RJ45-kabel. Bevestigd werkend: PIR-beweging in AUTO-modus schakelt pixel 0 aan, en de nieuwe AUTO/MANUEEL-knop (v0.16, zie 5.11) werkt zoals bedoeld.
 
 ### 5.1 Bestand en board-instellingen
 
@@ -231,7 +248,7 @@ Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJ
 
 ### 5.2 Webinterface — pagina's en endpoints
 
-**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data). Sinds v0.14 zijn `/` en `/advanced` ook bereikbaar via `http://<mdns-naam>.local/` (zie 5.12), naast het gewone IP-adres.
+**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13/v0.15/v0.16** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data). Sinds v0.14 zijn `/` en `/advanced` ook bereikbaar via `http://<mdns-naam>.local/` (zie 5.12), naast het gewone IP-adres.
 
 | Endpoint | Werking |
 |---|---|
@@ -245,7 +262,7 @@ Bij twijfel is de code in de sketch (`sjalay_v0.10.ino`, intern versienummer `SJ
 | `/toggle_sww_auto` | wisselt Automatisch/Handmatig voor SWW (relais 2) |
 | `/toggle_relay2_manual` | wisselt relais-2-stand (handmatige modus) |
 | `/set_boiler_setpoint?value=` | boiler-setpoint-slider (40-60 °C) — ook gebruikt door de landingspagina |
-| `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL |
+| `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL — **sinds v0.16 ook rechtstreeks bereikbaar vanop de landingspagina** (voorheen enkel op `/advanced`) |
 | `/toggle_pixel?idx=` | pixel `idx` aan/uit — **v0.12:** `idx=0` schakelt impliciet naar MANUEEL als hij nog in AUTO stond (relevant voor de landingspagina; geen gedragswijziging op `/advanced`) |
 | `/setcolor?r=&g=&b=` | powerpixel-kleur — ook gebruikt door de landingspagina |
 | `/set_fade_duration?value=` | dim-snelheid (1-10 s) |
@@ -291,6 +308,18 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 
 **Toekomstidee (niet gepland, nu niet nodig):** Shelly's (Gen2/3, Matter) hebben ingebouwde vermogensmeting via `http://<ip>/rpc/Switch.GetStatus?id=0` — zou ooit stroom-/spanningsmeting per pixel kunnen tonen. Blijft een idee, geen actieve to-do.
 
+**Andere Shelly-toestellen (toekomstidee, 30/09) — zelfde lokale HTTP-API, geen cloud nodig:**
+
+Naast de 4 stopcontacten heeft Shelly een breed assortiment WiFi-toestellen die met dezelfde aanpak (Gen1: `/relay/0?turn=on|off`, Gen2/3/4: `/rpc/Switch.Set`) rechtstreeks door de sketch aan te spreken zijn:
+
+- **Relais/schakelaars (inbouw):** Shelly Plus 1 / Plus 1PM (1-kanaals, achter bestaande schakelaar), Shelly Plus 2PM (2-kanaals, bv. rolluiken), Shelly Pro-serie (DIN-rail, meterkast)
+- **Dimmen & verlichting:** Shelly Dimmer (dimbare LED/halogeen), Shelly RGBW2 (ledstrips, eventueel aanvullend op de powerpixel-aanpak)
+- **Sensoren:** Shelly H&T (temp/vocht, batterij — aanvulling op de DS18B20's), Shelly Motion (alternatief voor PIR MOV1/MOV2), **Shelly Flood** (waterlekdetectie — relevant voor een leegstaande vakantiewoning), Shelly Door/Window (deur-/raamcontact)
+- **Verwarming:** Shelly TRV (thermostatische radiatorkraan op kamerniveau — de huidige E1/SF-aanpak via de ketel zelf blijft fundamenteler)
+- **Energie:** Shelly EM / 3EM (stroom-/verbruiksmeting, sluit aan bij het idee hierboven)
+
+Meest kansrijk om ooit toe te voegen: **Shelly Flood** (waterlek-detectie in een leegstaand huis) en **Shelly H&T** (extra temp/vocht-meetpunten zonder bekabeling) — beide lokaal, geen cloud, passend bij de bestaande filosofie. Volledig assortiment en aankoop: [shelly.com](https://www.shelly.com/) (of [us.shelly.com](https://us.shelly.com/) voor de Amerikaanse site) — geen actieve to-do.
+
 ### 5.8 Gekende aandachtspunten
 
 - NVS-instellingen overleven firmware-updates (namespace `"sjalay-cfg"`); enkel factory reset wist alles
@@ -313,10 +342,11 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 | v0.9 | Bugfix bed-modus/pixel-0-interactie zichtbaar in UI |
 | v0.10 | Optionele Shelly-stopcontacten per pixel |
 | v0.11 | SWW-relais (IO2) + boilersensor-rol + boiler-setpoint (40-60°C) + Auto/Handmatig voor relais 2; echte hysterese voor beide circuits; twee veiligheidslagen altijd actief; alle DS18B20's zichtbaar; sensor pas "ontbrekend" na 3 mislukte lezingen |
-| v0.12 | Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel eronder met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraken vanop de landingspagina |
+| v0.12 | Eenvoudige landingspagina op `/` voor gasten/huurders: grote licht-tegels + kleurkiezer, en voor verwarming/SWW een groot cijfer met de huidige (gemeten) temperatuur plus een kleine "→ X°"-regel eronder met de effectieve/gevraagde doeltemp; geen Auto/Handmatig zichtbaar. Forceert bij elke load beide circuits naar Auto; technische Status-pagina verhuisd naar `/advanced`, bereikbaar via tandwiel-icoon; 🏠-icoon in sidebar van Status/OTA/Settings; pixel 0 schakelt impliciet naar MANUEEL bij aanraking vanop de landingspagina |
 | v0.13 | Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; overbodige sectie-iconen boven de verwarmings-/SWW-kaart en het lampje-icoon boven de lichten-tegels verwijderd (dubbelop met de kaart-/tegel-iconen zelf) |
-| **v0.14** | **mDNS/Bonjour toegevoegd (`<ESPmDNS.h>`) — de controller is voortaan ook bereikbaar via `http://<naam>.local/` i.p.v. enkel het kale IP-adres. Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"), enkel a-z/0-9/streepjes toegelaten (ongeldige invoer wordt automatisch opgeschoond, terugval "sjalay" bij een lege/volledig ongeldige naam). Start na een geslaagde Wi-Fi-verbinding (niet in AP-setup-modus); een nieuwe naam vereist een herstart, net als de andere Settings-velden. Zichtbaar op `/advanced` (naast IP-adres) en in `/json` ("mdns")** |
-| **v0.15** | **Bed-modus/nachtmodus toegevoegd aan de landingspagina: nieuwe ronde knop (🛏️), even groot als de kleurkiezer (52px) en er links naast geplaatst. Voorkomt dat pixel 0 (beweging/schemer) 's nachts automatisch aangaat. Hergebruikt volledig de bestaande bed-variabele/NVS-veld en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9) — geen nieuwe backend-logica. Pixel 0 wordt tijdens bed-modus getoond als vergrendelde tegel (maan-icoon, gedimd, geen tik-actie); de bed-knop licht op zolang bed-modus actief is. Sync via het bestaande `/json`-veld `"bed"`** |
+| v0.14 | mDNS/Bonjour toegevoegd (`<ESPmDNS.h>`) — de controller is voortaan ook bereikbaar via `http://<naam>.local/` i.p.v. enkel het kale IP-adres. Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"), enkel a-z/0-9/streepjes toegelaten (ongeldige invoer wordt automatisch opgeschoond, terugval "sjalay" bij een lege/volledig ongeldige naam). Start na een geslaagde Wi-Fi-verbinding (niet in AP-setup-modus); een nieuwe naam vereist een herstart, net als de andere Settings-velden. Zichtbaar op `/advanced` (naast IP-adres) en in `/json` ("mdns") |
+| v0.15 | Bed-modus/nachtmodus toegevoegd aan de landingspagina: nieuwe ronde knop (🛏️), even groot als de kleurkiezer (52px) en er links naast geplaatst. Voorkomt dat pixel 0 (beweging/schemer) 's nachts automatisch aangaat. Hergebruikt volledig de bestaande bed-variabele/NVS-veld en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9) — geen nieuwe backend-logica. Pixel 0 wordt tijdens bed-modus getoond als vergrendelde tegel (maan-icoon, gedimd, geen tik-actie); de bed-knop licht op zolang bed-modus actief is. Sync via het bestaande `/json`-veld `"bed"` |
+| **v0.16** | **Nieuwe ronde knop op de landingspagina om Pixel 0 (MOV1) ook terug naar AUTO te kunnen zetten — voorheen kon je op `/` enkel (impliciet, door de tegel aan te raken) naar MANUEEL schakelen, zonder weg terug. Zelfde vorm/grootte als de bed-knop (52px), er onmiddellijk naast geplaatst. Icoon: 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen). Hergebruikt volledig het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2) en het `/json`-veld `"p0m"` — geen nieuwe backend-logica. Getest op het thuisnetwerk (30/09) en bevestigd werkend** |
 
 ### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
@@ -342,18 +372,19 @@ Elke pixel kan gekoppeld worden aan 0-3 Shelly-stopcontacten die simultaan meesc
 
 Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
-### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13, bed-modus toegevoegd in v0.15)
+### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13, bed-modus toegevoegd in v0.15, pixel-0-modusknop toegevoegd in v0.16)
 
 **Aanleiding:** gasten/huurders hebben niets aan Auto/Handmatig-schakelaars, hysterese-instellingen of sensordiagnostiek — enkel licht aan/uit + kleur, en een comfortabele temperatuur voor verwarming/warm water, met zo weinig mogelijk tekst en iconen.
 
 - **`/`** is nu deze landingspagina (`handleLanding()`); de vroegere Status-pagina verhuisde **ongewijzigd** naar **`/advanced`** (`handleStatus()`, enkel het pad veranderde). Bereikbaar vanop de landingspagina via een klein tandwiel-icoon ⚙️ onderaan, zonder tekst.
 - **Verlichting:** grote tegels in een grid, één per pixel (inclusief pixel 0/MOV1) — tegelkleur = de ingestelde RGB-kleur wanneer aan, grijs/wit wanneer uit, pixelnaam eronder (geen apart lampje-icoon boven het grid meer sinds v0.13 — dat stond dubbelop met de lampjes op de tegels zelf). Aanraken = direct schakelen (`/toggle_pixel`). Eén kleurkiezer onder het grid voor de gedeelde RGB-kleur van alle pixels (`/setcolor`).
-  - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen.
+  - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen. Sinds v0.16 kan je via de nieuwe modusknop (zie hieronder) ook expliciet terug naar AUTO schakelen.
 - **Verwarming/SWW:** elke kaart heeft één eigen icoon (🔥/🚿, met een klein statuslampje ernaast voor ketelvraag/pomp actief) — geen los sectie-icoon ernaast (dubbelop met het kaart-icoon). Daaronder, sinds v0.13 op **één lijn** in de kaartkleur (oranje voor verwarming, blauw voor SWW): eerst groot de **huidige, gemeten temperatuur** (`room_temp`/`temp_boiler` — "IST", waar een gast eerst naar kijkt), gevolgd door de **effectieve/gevraagde doeltemperatuur** kleiner tussen haakjes ("SOLL": `effective_setpoint` voor verwarming, `boiler_setpoint` voor SWW), bv. `21.3° (→ 21°)`. Bij een onbetrouwbare sensor toont het IST-cijfer "n.v.t." i.p.v. een onzinnige waarde. Daaronder de setpoint-schuifregelaar. Géén Auto/Handmatig-schakelaar, géén los relais zichtbaar.
 - **Veiligheid:** bij **elke** keer dat `/` geladen wordt, worden beide regelkringen geforceerd naar Auto gezet — ook als iemand ze op `/advanced` bewust op Handmatig had gezet. NVS wordt enkel effectief beschreven bij een échte wissel (niet bij elke herlaad/refresh), om onnodige flash-writes te vermijden.
 - Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` het kleine SOLL-stuk tussen haakjes.
 - 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
-- **Bed-modus/nachtmodus (nieuw in v0.15):** een ronde knop (🛏️, `&#128719;`), exact even groot als de kleurkiezer (52px) en er onmiddellijk **links** naast geplaatst, onder het lichten-grid. Voorkomt dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts automatisch aangaat — handig als gasten in die kamer slapen. Hergebruikt volledig de bestaande `bed`-variabele/NVS-instelling en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9, voordien enkel bereikbaar via `/advanced`); er is geen nieuwe backend-logica nodig, want `updatePixelLogic()` forceerde pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens bed-modus getoond als een "vergrendelde" tegel (maan-icoon 🌙, gedimd, geen tik-actie) in plaats van een tegel die een tik toch zou negeren — dat zou verwarrend zijn. De bed-knop zelf licht donkerblauw op zolang bed-modus actief is. Alles synct live mee (elke 3s) via het bestaande `/json`-veld `"bed"` (al aanwezig sinds v0.9), dus ook als bed-modus via `/advanced` wordt aan/uitgezet, past de landingspagina zich automatisch aan.
+- **Bed-modus/nachtmodus (nieuw in v0.15):** een ronde knop (🛏️, `&#128719;`), exact even groot als de kleurkiezer (52px), onder het lichten-grid. Voorkomt dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts automatisch aangaat — handig als gasten in die kamer slapen. Hergebruikt volledig de bestaande `bed`-variabele/NVS-instelling en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9, voordien enkel bereikbaar via `/advanced`); er is geen nieuwe backend-logica nodig, want `updatePixelLogic()` forceerde pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens bed-modus getoond als een "vergrendelde" tegel (maan-icoon 🌙, gedimd, geen tik-actie) in plaats van een tegel die een tik toch zou negeren — dat zou verwarrend zijn. De bed-knop zelf licht donkerblauw op zolang bed-modus actief is. Alles synct live mee (elke 3s) via het bestaande `/json`-veld `"bed"` (al aanwezig sinds v0.9), dus ook als bed-modus via `/advanced` wordt aan/uitgezet, past de landingspagina zich automatisch aan.
+- **Pixel-0-modusknop AUTO/MANUEEL (nieuw in v0.16):** een tweede ronde knop, exact even groot als de bed-knop (52px), er onmiddellijk naast geplaatst — zo staan de twee gerelateerde pixel-0-knoppen samen in één rij. Toont 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen zolang MANUEEL actief is — zelfde stijl als de bed-knop, andere kleur). Een tik wisselt tussen de twee via het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2, voordien enkel op `/advanced`) — geen nieuwe backend-logica. Deze knop is enkel de ontbrekende weg terug naar AUTO vanaf de landingspagina; het bestaande gedrag (een tik op de pixel-0-tegel zelf schakelt nog steeds impliciet naar MANUEEL) blijft ongewijzigd. Live sync via het bestaande `/json`-veld `"p0m"` (al aanwezig). Getest op het thuisnetwerk (30/09) en bevestigd werkend.
 
 ### 5.12 mDNS/Bonjour — `http://<naam>.local/` (nieuw in v0.14)
 
@@ -405,7 +436,7 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 | `sw2man`/`swon` | bool/bool | Handmatige relais-2-stand / pomp actief |
 | `hsww` | float | Hysteresisband SWW (°C) |
 | `dsl` | array | Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
-| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat — `bed` stuurt sinds v0.15 ook de vergrendelde weergave van pixel-0-tegel + bed-knop op de landingspagina |
+| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat — `bed` stuurt de vergrendelde weergave van pixel-0-tegel + bed-knop, `p0m` stuurt sinds v0.16 ook het icoon van de nieuwe AUTO/MANUEEL-knop op de landingspagina |
 | `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd — `pn` bepaalt hoeveel licht-tegels de landingspagina tekent |
 | `pon` | string | Bitstring aan/uit-status per pixel |
 | `nr`/`ng`/`nb` | int | Huidige RGB-kleur |
@@ -432,11 +463,17 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [ ] T-bus-testsensor (kelder/ESP-box) evt. definitief vastsolderen indien behouden
 - [ ] Na bedrading: hysterese-defaults (1,0°C CV / 5,0°C SWW) in de praktijk evalueren, bijstellen indien nodig
 - [ ] Definitieve montage (behuizing in de kelder)
-- [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
+- [x] **Zarlar-Pi omgeschakeld naar volledige subnet-router** (naast de bestaande Funnel) — subnet `192.168.0.0/24` geadverteerd, goedgekeurd en bevestigd bereikbaar vanop afstand (30/09) — zie 3
 - [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
 - [x] **Sketch v0.13 gebouwd:** IST+SOLL samen op één lijn in kaartkleur, overbodige lampje-/sectie-iconen weg (29/09)
 - [x] **Sketch v0.14 gebouwd:** mDNS/Bonjour (`sjalay.local`, naam instelbaar in Settings) (29/09)
 - [x] **Sketch v0.15 gebouwd:** bed-modus/nachtmodus-knop toegevoegd aan de landingspagina (29/09)
+- [x] **SSH-toegang tot de Pi bevestigd vanop afstand**, zowel via Tailscale-IP als lokaal IP (30/09) — zie 3.1
+- [x] **Lokaal IP van de Pi vastgezet op `192.168.50.2`** via NetworkManager (30/09) — zie 3.1
+- [x] **Pi-wachtwoord gewijzigd** naar `fidel2026` via `passwd` (30/09) — zie 3.1
+- [x] **Sketch v0.16 gebouwd:** AUTO/MANUEEL-knop voor pixel 0 toegevoegd aan de landingspagina (30/09) — zie 5.11
+- [x] **Landingspagina functioneel getest op het thuisnetwerk** (factory reset, volledige RoomSense via RJ45): PIR/AUTO-modus en de nieuwe AUTO/MANUEEL-knop bevestigd werkend (30/09)
 - [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel verder bijstellen
 - [ ] mDNS in de praktijk testen (na flashen): `http://sjalay.local/` openen vanaf een gewone smartphone/laptop op het Sjalay-netwerk
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
+- [ ] *(toekomst, niet urgent)* Overige Shelly-toestellen (Flood, H&T, …) evalueren als aanvulling — zie 5.7, nog niet nodig
