@@ -114,6 +114,48 @@ Uit de WOLF Regelung-R2-handleiding (§Fachmannebene Parameter, HG24 "Warmwasser
 
 **Status:** plan vastgelegd en volledig fysiek voorverkend (30/09) — fabriekssensor, klemlocatie én HG24-toegang alle drie bevestigd. Sketch-logica (v0.11) blijft ongewijzigd bruikbaar. Enkel de effectieve omschakeling (HG24 op 3, sensor loskoppelen, relais 2 aansluiten, herstarten) en toewijzing van de boilersensor in Settings staan nog te gebeuren; pas daarna in bedrijf te nemen.
 
+### 1.5 Voor te bereiden thuis (Zarlardinge, vóór de volgende keer)
+
+- [ ] **ESP32-C6-shield + 4-kanaals relaismodule inbouwen** in de bestelde wandmontagebox (20 × 12 × 7,5 cm)
+- [ ] **Houten plank (20 × 40 cm)** voorbereiden om de box op de muur (kelder Sjalay) te bevestigen
+- [ ] **Binnenplankje (20 × 12 cm)** maken om de PCB's (shield + relaismodule) op te schroeven, in de box
+- [ ] **Alle doorvoeropeningen** al voorboren in de box (voeding, RoomSense-RJ45, relais-1-bedrading naar E1, relais-2-bedrading naar SF, DS18B20-boilersensor/T-bus-verlengdraad) — vermijdt improviseren ter plaatse
+- [ ] **DS18B20 solderen met 3 draadjes van 10 cm** op de T-bus, zodat de sensor net buiten de nieuwe box uitsteekt — voor het meten van de kelder-/omgevingstemperatuur (dit is de sensor bedoeld in 5.10 als "T-bus-testsensor")
+
+### 1.6 Mee te brengen naar Sjalay (volgende keer)
+
+**Materiaal**
+- **Meeraderige kabel, min. 2 paar (4 aders)** — één kabel voor zowel relais 1 → E1 (geel) als relais 2 → SF (blauw), elk paar één circuit
+- **5V voedingsblokje + rood/zwart voedingskabeltje** voor de ESP32-C6-shield
+- **Behuizing** voor controller-shield + relaismodule (zie 1.5 — best al thuis ingebouwd meebrengen)
+- **RoomSense-kabel met RJ45 aan beide kanten**
+- DS18B20 waterdichte sensor (boiler), indien nog niet in bezit
+- OneWire-verlengkabel (3-aderig: DATA/VCC/GND) voor de boilersensor-aftakking
+- WAGO-lasklemmetjes (2- en 3-voudig)
+- Krimpkousjes/isolatietape (voor de losgekoppelde fabriekssensor-draadjes, zie 1.4)
+- Reserveschroefjes voor de klemmenstrook
+
+**Gereedschap**
+- Kleine platte + kruiskop schroevendraaier (klemmenstrook X20/E1)
+- Multimeter
+- Draadstripper/afstriptang + zijkniptang
+- WAGO-krimptang of soldeerbout+tin
+- **RJ45-krimptang** (bij Maarten ophalen!)
+- **RJ45-kabeltester**
+- Dymo-labelprinter (of thuis geprinte labels, zie lijstje hieronder)
+- Hoofdlamp/zaklamp
+- Kabelbinders
+
+**Labellijstje (Dymo of thuis printen):**
+1. `RELAIS 1 → E1 (VERWARMING)` — x2 (beide kabeluiteinden)
+2. `RELAIS 2 → SF (SWW/BOILER)` — x2 (beide kabeluiteinden)
+3. `5V VOEDING ESP32-C6` — x2
+4. `ROOMSENSE (RJ45)` — x2 (beide zijden van de kabel)
+5. `BOILERSENSOR DS18B20` — x2
+6. `SJALAY CONTROLLER` — x1 (op de nieuwe behuizing zelf)
+
+**Niet vergeten:** Vakman-toegangscode (**1**)
+
 ---
 
 ## 2. Netwerk
@@ -384,6 +426,8 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [x] Fabriekssensor op SF-klem bevestigd aanwezig + doorgemeten (2,52V bij 49°C, 30/09) — zie 1.4
 - [x] HG24 bevestigd bereikbaar op de BM, staat nog op 1 (30/09) — zie 1.4
 - [ ] **Omschakeling uitvoeren:** HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
+- [ ] **Thuis (Zarlardinge):** wandmontagebox inbouwen (shield + relaismodule op plankje, doorvoeropeningen voorboren) — zie 1.5
+- [ ] **Thuis (Zarlardinge):** DS18B20 met 3× 10cm draad solderen op de T-bus (kelder-/omgevingssensor, net buiten de box) — zie 1.5
 - [ ] **Boilersensor fysiek bedraden** op de verlengdraad (parallel OneWire) en toewijzen in Settings
 - [ ] T-bus-testsensor (kelder/ESP-box) evt. definitief vastsolderen indien behouden
 - [ ] Na bedrading: hysterese-defaults (1,0°C CV / 5,0°C SWW) in de praktijk evalueren, bijstellen indien nodig
