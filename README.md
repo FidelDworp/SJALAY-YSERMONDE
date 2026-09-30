@@ -2,11 +2,11 @@
 
 **Locatie:** Sjalay (Recht) — geen permanente WiFi/fiber, gevoed via 4G  
 **Basis:** ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
-**Laatst bijgewerkt:** 29 sep 2026
+**Laatst bijgewerkt:** 30 sep 2026
 
 Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vier dingen tegelijk in het vakantiehuis:
 
-1. **Verwarming én SWW op afstand aan/uit** — relais 1 op de E1-ingang van de WOLF-ketel, relais 2 op de SWW-laadpomp
+1. **Verwarming én SWW op afstand aan/uit** — relais 1 op de E1-ingang van de WOLF-ketel, relais 2 op de SF-klem (Speicherfühler-ingang)
 2. **Sensoren monitoren** — temperatuur (meerdere DS18B20-rollen), vocht, licht, beweging, met logging naar Google Sheets
 3. **Verlichting aansturen** — powerpixels, optioneel gekoppeld aan Shelly-stopcontacten
 4. **Overal bereikbaar** — via Tailscale, zonder vaste internet-IP of poort-forwarding, en lokaal ook via mDNS (`http://sjalay.local/`)
@@ -32,7 +32,7 @@ De ketel heeft een parametreerbare, potentiaalvrije ingang **E1** op de klemmens
 | **Open** | Verwarming (Heizbetrieb) geblokkeerd — "Sommerbetrieb" |
 | **Gesloten** | Verwarming draait normaal, volgens het schema/setpoint van de BM |
 
-Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed en blijft dus volledig door de BM zelf beheerd (behalve via de nieuwe laadpomp-aanpak, zie 1.4).
+Deze functie raakt **uitsluitend de CV-verwarming**. Warmwaterbereiding (SWW) wordt er niet door beïnvloed; die wordt apart geregeld via de SF-klem, zie 1.4.
 
 **Fysiek gevonden en elektrisch bevestigd (29/09):** op de klemmenstrook boven de regelmodule zit een rij van 4 klemblokjes (groen/geel/blauw/wit). Het **gele blokje** droeg enkel een kortsluitbrug en geen enkele sensor — de andere drie (groen/blauw/wit) hebben elk een echte 2-draads sensor erop aangesloten. Meting bevestigde dit definitief:
 - **Met brug: 0V** (kortgesloten = "gesloten" = verwarming toegelaten)
@@ -73,17 +73,46 @@ E1 is de **hoofdschakelaar** die alles overstijgt: zolang E1 **open** staat, bli
 
 Zo wordt de BM een "domme" thermostaat die altijd hetzelfde comfortschema aanhoudt, en is E1 de enige externe aan/uit-knop.
 
-### 1.4 SWW op afstand — tweede relais op de laadpomp (sketch klaar 29/09, nog fysiek te bedraden)
+### 1.4 SWW op afstand — relais 2 op de SF-klem (nog fysiek te bedraden)
 
-E1/HG13=1 regelt enkel CV. Voor SWW werd overwogen: HG13=2 (**afgewezen**, zie 1.2 — breekt de vorstbeveiliging-fail-safe en koppelt CV/SWW onlosmakelijk aaneen). In de plaats: de **SWW-laadpomp** (Speicherladepumpe, de aparte 230V-circulatiepomp onder de CV-pomp op de ketel, die ketelwater naar de boilerwisselaar pompt) fysiek schakelen via een **tweede relais**. Zonder die pomp kan de ketel het tapwater niet opwarmen, ongeacht de BM-vraag.
+E1/HG13=1 regelt enkel CV. Voor SWW werd overwogen: HG13=2 (**afgewezen**, zie 1.2 — breekt de vorstbeveiliging-fail-safe en koppelt CV/SWW onlosmakelijk aaneen).
 
-**Bedrading:** relais 2 van de bestaande 4-kanaals 230V/10A-relaismodule (optisch + galvanisch geïsoleerd, zie foto-bevestiging 29/09), aangestuurd via **IO2** (fysiek naast IO10 op de shield, handig voor de bekabeling — dit pin lag voorheen ongebruikt gereserveerd als "LDR2 analog"). Enkel de fasedraad van de laadpomp onderbreken, nul/aarde ongemoeid laten, NO-contact gebruiken (fail-safe: onbekrachtigd = pomp uit = SWW geblokkeerd, net als bij relais 1).
+*(Een eerder plan om i.p.v. de SF-klem de 230V-laadpomp zelf te onderbreken is verlaten: dat blokkeert enkel de pomp, niet de warmtevraag, en laat de brander dan nutteloos kortcyclen tegen een dichte klep.)*
 
-**Nog aandachtspunt:** als de ketel deze pomp niet meer kan aansturen omdat de voeding fysiek weg is, kan de ketel z'n eigen Pumpenstandschutz/vorstbeveiligingslogica voor dát pompcircuit niet meer uitvoeren zolang het relais openstaat. Checken in de winter of dit een probleem vormt.
+**De warmtevraag zelf blokkeren via de SF-klem (Speicherfühler), i.p.v. de pomp:**
 
-**Regeling (sketch v0.11):** een eigen boilersensor (DS18B20, zie 5.10) en boiler-setpoint (40-60°C) sturen relais 2 automatisch aan, met dezelfde twee harde veiligheidslagen als de verwarming (bovengrens-cutoff + geen-betrouwbare-sensor-cutoff), ongeacht Auto/Handmatig — zie 5.10 voor het volledige ontwerp.
+Uit de WOLF Regelung-R2-handleiding (§Fachmannebene Parameter, HG24 "Warmwasser-Fühler-Betriebsart", gecontroleerd 30/09):
+- **Betriebsart 1** (fabrieksinstelling): normale elektronische Speicherfühler (NTC) op de SF-klem.
+- **Betriebsart 3**: de SF-klem wordt in plaats daarvan bediend door een **extern, potentiaalvrij thermostaatcontact** — exact zoals E1 werkt voor CV. Letterlijk uit de handleiding: *"Fühlereingang geschlossen: Pumpe ein / Fühlereingang offen: Pumpe aus"* — en belangrijker: de brander verwarmt de ketel enkel tot Speichersolltemperatuur zolang dat contact **gesloten** is. Staat het contact **open**, dan is er voor de ketel gewoon geen SWW-vraag — de brander wordt dus nooit nutteloos gestart, in tegenstelling tot het pomp-onderbreken-plan.
+- Let op: *"Nach Änderung der Fühlerbetriebsart muss die Anlage aus- und wieder eingeschaltet werden"* — een herstart van de ketel is nodig na het wijzigen van HG24.
 
-**Status:** sketch-logica volledig gebouwd en meegenomen in v0.11 (zie hoofdstuk 5). Fysieke bedrading van relais 2 op de laadpomp en van de boilersensor op de T-bus-verlengdraad staat nog te gebeuren; pas daarna in bedrijf te nemen.
+**HG24 bevestigd bereikbaar (30/09) ✅** — staat momenteel op **1** (fabriekswaarde), klaar om bij de volgende keer naar **3** te zetten. Navigatie identiek aan HG13 (zie 1.2): rechtse ronde knop → "VAKMAN" → bevestigen → **code 1** → "Ketel" (Heizgerät) → HG24. **Tip:** zonder eerst code 1 in te voeren kom je niet door naar het "Ketel"-menu — die stap is dus niet optioneel.
+
+**Praktisch:**
+- **Bedrading:** relais 2 (aangestuurd via **IO2**, zie 4) gaat niet meer naar de 230V-fasedraad van de laadpomp, maar naar de **SF-klem** — een lichte, potentiaalvrije signaaldraad, geen 230V-schakeling meer nodig voor dit circuit (veiliger, eenvoudiger te bedraden).
+- **Op de ketel:** HG24 moet van 1 naar **3** gezet worden (Fachmannebene, net als HG13 in 1.2), en de bestaande fabrieks-Speicherfühler (indien aanwezig op de SF-klem) moet losgekoppeld/vervangen worden.
+- **Sketch:** **geen enkele wijziging nodig.** Relais 2 + de eigen boilersensor (DS18B20, zie 5.10) + de bestaande hysterese-logica blijven functioneel identiek — enkel *waar* relais 2 fysiek naartoe gaat verandert, niet de software die het aanstuurt.
+
+**Klemlocatie bevestigd (30/09, uit het Schaltplan Heizkesselregelung R2):** SF zit op dezelfde klemmenstrook **X20** als E1, AF en eBUS — het middelste klemmenpaar, vlak naast E1: `AF (grijs) — *SF (blauw) — *E1 (geel) — eBUS (groen)`. Beide (`*SF` en `*E1`) staan gemarkeerd als "Zubehör" (optioneel accessoire).
+
+**Let op — verschil met E1:** de handleiding vermeldt enkel bij E1 expliciet *"Brücke... (Parameter HG13) entfernen"* — bij SF staat geen soortgelijke brug-voetnoot. Niet zomaar aannemen dat SF hetzelfde brugje heeft als E1 had.
+
+**Fabriekssensor bevestigd aanwezig (30/09) ✅** — op de blauwe klem (SF) hangt effectief een echte 2-draads sensor (wit/rood), geen brugje. Spanningsmeting over de klem: **2,52V bij een actuele SWW-temperatuur van 49°C** — bevestigt een levende, temperatuurafhankelijke sensor (vermoedelijk gemeten via een interne pull-up-spanningsdeler op de regelprint, net als bij E1's 5V-pull-up). Ter vergelijking, geïnterpoleerd uit de NTC-tabel (20°C≈6247Ω, 60°C≈1244Ω, 80°C≈628Ω) verwacht je bij 49°C een weerstand rond **~1900-2000Ω** — de exacte omrekening van de gemeten 2,52V naar Ω is niet mogelijk zonder de pull-up-waarde van de regelprint te kennen, maar dat is ook niet nodig: in Betriebsart 3 leest de ketel geen analoge waarde meer, enkel open/dicht.
+
+**⚡ Belangrijk — de fabriekssensor moet eraf, niet ernaast blijven hangen:** uit de handleiding is Betriebsart 3 nadrukkelijk "een extern thermostaat **of** elektronische Speichertemperaturfühler" — niet allebei tegelijk op dezelfde klem. Reden: in Betriebsart 3 verwacht de regelmodule op SF een eenvoudig open/dicht-signaal, geen analoge weerstand. Blijft de bestaande NTC-sensor (~1900-6000Ω, afhankelijk van temperatuur) parallel aan het relais hangen, dan ziet de ketel een tussenwaarde die niet ondubbelzinnig "open" (oneindig) of "gesloten" (~0Ω) is — dat geeft onvoorspelbaar gedrag: verkeerde interpretatie, permanent "gesloten" gelezen, of willekeurig schakelen.
+
+**Bedradingsvolgorde bij de effectieve omschakeling (volgende keer ter plaatse):**
+1. HG24 op de BM eerst van 1 naar 3 zetten (herstart van de ketel nadien, zie hierboven)
+2. De bestaande wit/rode sensor **loskoppelen** van het blauwe blokje (SF)
+3. De twee relais-2-draden (potentiaalvrij, net als bij E1) in de plaats daarvan op diezelfde SF-klem aansluiten
+4. Ketel herstarten (al vereist door de HG24-wijziging zelf)
+
+**Neveneffect om bewust van te zijn:** zodra de fabriekssensor eraf is, heeft de ketel/BM zelf geen boilertemperatuur-uitlezing meer — zijn eigen interne weergave/logica voor SWW verdwijnt, want SF is dan puur een schakelaar. Geen probleem voor Sjalay: de eigen DS18B20-boilersensor blijft onafhankelijk de temperatuur meten/loggen/tonen op de landingspagina en `/advanced` — maar de ketel/BM zelf toont dan geen boilertemp meer, mocht daar ooit naar gekeken worden.
+
+**Nog te bevestigen op locatie:**
+1. HG24 raadpleegbaar/wijzigbaar bevestigen op de BM (Fachmannebene, code 1)
+
+**Status:** plan vastgelegd en volledig fysiek voorverkend (30/09) — fabriekssensor, klemlocatie én HG24-toegang alle drie bevestigd. Sketch-logica (v0.11) blijft ongewijzigd bruikbaar. Enkel de effectieve omschakeling (HG24 op 3, sensor loskoppelen, relais 2 aansluiten, herstarten) en toewijzing van de boilersensor in Settings staan nog te gebeuren; pas daarna in bedrijf te nemen.
 
 ---
 
@@ -137,7 +166,7 @@ Een **Raspberry Pi 3B+** in Recht fungeert als **Tailscale subnet router**: het 
 | IO18 | CO2 PWM input (MH-Z19, 5V!) | nee |
 | IO19 | MOV2 PIR (of Dotstar CLK) | nee |
 | **IO10** | **TSTAT switch (Gnd = ON)** | **ja — relais 1 → WOLF E1** |
-| **IO2** | (was: LDR2 analog, ongebruikt) | **ja (v0.11) — relais 2 → SWW-laadpomp** (zie 1.4) |
+| **IO2** | (was: LDR2 analog, ongebruikt) | **ja — relais 2 → SF-klem (Speicherfühler-ingang ketel)** (zie 1.4) |
 | IO15 | Reserve 2 (Output) | vrije reserve (was eerst gepland voor relais 2, IO2 gekozen i.p.v. wegens bedradingsgemak) |
 | IO20/WKP | Reserve 3 | nee |
 | IO0 | Reserve 1 (BOOT pin) | nee — liever niet gebruiken |
@@ -351,11 +380,13 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 - [ ] Relais-1-test met ESP32 (IO10) op de echte E1-klemmen
 - [x] Shelly-stopcontacten vast IP toegekend en gekoppeld via `/settings` (4 stuks, 29/09, meteen werkend)
 - [x] **Sketch v0.11 gebouwd:** SWW-relais (IO2), boilersensor-rol, boiler-setpoint, hysterese (beide circuits), veiligheidslagen, alle-DS-sensoren-lijst (29/09)
-- [ ] **Relais 2 fysiek bedraden** op de SWW-laadpomp (230V, fasedraad, NO-contact) — zie 1.4
+- [x] **SWW-blokkeerstrategie vastgelegd (30/09):** relais 2 → SF-klem (Speicherfühler, HG24=3), zie 1.4
+- [x] Fabriekssensor op SF-klem bevestigd aanwezig + doorgemeten (2,52V bij 49°C, 30/09) — zie 1.4
+- [x] HG24 bevestigd bereikbaar op de BM, staat nog op 1 (30/09) — zie 1.4
+- [ ] **Omschakeling uitvoeren:** HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
 - [ ] **Boilersensor fysiek bedraden** op de verlengdraad (parallel OneWire) en toewijzen in Settings
 - [ ] T-bus-testsensor (kelder/ESP-box) evt. definitief vastsolderen indien behouden
 - [ ] Na bedrading: hysterese-defaults (1,0°C CV / 5,0°C SWW) in de praktijk evalueren, bijstellen indien nodig
-- [ ] Pumpenstandschutz-risico voor de laadpomp checken in de winter (zie 1.4)
 - [ ] Definitieve montage (behuizing in de kelder)
 - [ ] Pi-wachtwoord wijzigen (Sjalay-Pi); Zarlar-Pi omschakelen naar subnet-router (apart to-do-document)
 - [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
