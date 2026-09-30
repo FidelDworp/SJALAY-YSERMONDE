@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v0.15 — 29 sep 2026
+// SJALAY CONTROLLER — v0.16 — 30 sep 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -24,6 +24,16 @@
 //   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
 //   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
 //
+// v0.16  (30sep26): Nieuwe ronde knop op de landingspagina om Pixel 0 (MOV1) vanop "/" ook terug
+//                   naar AUTO te kunnen zetten. Voorheen kon je op de landingspagina enkel
+//                   (impliciet, door de tegel aan te raken) naar MANUEEL schakelen, maar er was
+//                   geen weg terug zonder naar /advanced te gaan. Zelfde vorm/grootte als de
+//                   bed-knop (52px, rond), er onmiddellijk naast geplaatst. Icoon: 🔄 (&#128260;)
+//                   in AUTO, ✋ (&#9995;) in MANUEEL — de knop licht op (zelfde stijl als de
+//                   bed-knop, andere kleur) zolang MANUEEL actief is. Hergebruikt volledig het
+//                   bestaande /toggle_pixel_mode-endpoint (al aanwezig sinds v0.2, voordien enkel
+//                   bereikbaar via /advanced) en het /json-veld "p0m" (al aanwezig) — geen
+//                   nieuwe backend-logica, enkel een knop + live icoonwissel op de landingspagina.
 // v0.15  (29sep26): Bed-modus/nachtmodus toegevoegd aan de landingspagina, zodat gasten kunnen
 //                   voorkomen dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts
 //                   automatisch aangaat. Nieuwe ronde knop (🛏️, &#128719;), even groot als de
@@ -186,7 +196,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "0.15"
+#define SJALAY_VERSION "0.16"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -1045,6 +1055,9 @@ void handleLanding(AsyncWebServerRequest *request) {
     ".bedbtn{width:52px;height:52px;border-radius:50%;border:2px solid #ccc;background:#fff;"
     "font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}"
     ".bedbtn.on{background:#2c3968;border-color:#2c3968;}"
+    ".p0btn{width:52px;height:52px;border-radius:50%;border:2px solid #ccc;background:#fff;"
+    "font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}"
+    ".p0btn.on{background:#1b7a43;border-color:#1b7a43;}"
     ".card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.15);padding:18px;text-align:center;margin-bottom:16px;}"
     ".card .ic{font-size:34px;}"
     ".card .big{font-size:40px;font-weight:bold;margin:6px 0 14px;}"
@@ -1079,10 +1092,15 @@ void handleLanding(AsyncWebServerRequest *request) {
   // Bed-modus (nachtmodus): zelfde grootte als de kleurkiezer, links ernaast. Herbruikt de
   // bestaande bed-variabele/NVS-veld en het /toggle_bed-endpoint (al aanwezig sinds v0.9,
   // voorheen enkel op /advanced) - hier enkel een knop toegevoegd, geen nieuwe backend-logica.
+  // Pixel-0-modusknop (AUTO/MANUEEL), zelfde vorm/grootte als de bed-knop, ernaast geplaatst.
+  // Hergebruikt het bestaande /toggle_pixel_mode-endpoint (al aanwezig sinds v0.2) - dit is
+  // enkel de ontbrekende weg terug naar AUTO vanaf de landingspagina (zie v0.16-changelog).
   p->printf("<div class=\"colorwrap\">"
     "<button type=\"button\" id=\"bedToggle\" class=\"bedbtn%s\" onclick=\"toggleBed()\">&#128719;</button>"
+    "<button type=\"button\" id=\"p0modeToggle\" class=\"p0btn%s\" onclick=\"toggleP0Mode()\">%s</button>"
     "<input type=\"color\" id=\"colorPicker\" value=\"%s\" onchange=\"setNeoColor(this.value)\">"
-    "</div>", bed ? " on" : "", hexcol);
+    "</div>", bed ? " on" : "", pixel0_mode == 1 ? " on" : "",
+    pixel0_mode == 1 ? "&#9995;" : "&#128260;", hexcol);
 
   // ---- Verwarming ----
   // IST (huidige, gemeten temperatuur) en SOLL (effectieve/gevraagde doeltemp, incl.
@@ -1124,6 +1142,7 @@ void handleLanding(AsyncWebServerRequest *request) {
     "function setVal(url,v){fetch(url+'?value='+v).then(refresh);}"
     "function toggleLight(i){if(i==0&&bedOn)return;fetch('/toggle_pixel?idx='+i).then(refresh);}"
     "function toggleBed(){fetch('/toggle_bed').then(refresh);}"
+    "function toggleP0Mode(){fetch('/toggle_pixel_mode').then(refresh);}"
     "function setNeoColor(hex){"
       "var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);"
       "lastHex=hex;"
@@ -1134,6 +1153,7 @@ void handleLanding(AsyncWebServerRequest *request) {
         "if(document.activeElement.id!=='colorPicker')document.getElementById('colorPicker').value=lastHex;"
         "bedOn=data.bed;"
         "var bb=document.getElementById('bedToggle');if(bb)bb.className='bedbtn'+(bedOn?' on':'');"
+        "var pb=document.getElementById('p0modeToggle');if(pb){pb.className='p0btn'+(data.p0m===1?' on':'');pb.innerHTML=(data.p0m===1?'&#9995;':'&#128260;');}"
         "for(var i=0;i<data.pn;i++){"
           "var t=document.getElementById('lt-'+i);if(!t)continue;"
           "var locked=(i==0&&bedOn);"
