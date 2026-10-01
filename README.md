@@ -514,12 +514,19 @@ Het Sheets-logging-script (`SJALAY_SHEETS_LOGGER.gs`) is gebaseerd op het Zarlar
 
 **Bij een latere update van het script:** altijd **"Implementaties beheren" → potlood-icoon (Bewerken) → versienummer verhogen → Implementeren** gebruiken, nooit "Nieuwe implementatie" — dat laatste geeft een nieuwe URL, waardoor de Sjalay-Settings opnieuw aangepast moeten worden.
 
+**Actief geïmplementeerd (1/10/2026) ✅** — Web-app-URL, ingevuld in Settings (Google Script-URL):
+```
+https://script.google.com/macros/s/AKfycby95iiPEI0Zd7wKGgo_FXL5UD9LWJ4vu3GO_RVnOFa9mlxIM8lr7NjRh6w0aTfXKiT_kg/exec
+```
+Bevestigd werkend: `setupHeaders` en `test` succesvol gedraaid, controller herstart met deze URL, eerste echte logregel vanaf de ESP32 zelf binnengekomen.
+
+**Rij-limiet (`MAX_ROWS`):** staat default op **50000** datarijen (zie de configuratieconstante bovenaan het script). Zodra dat aantal overschreden wordt, verwijdert `doPost` bij elke nieuwe log automatisch de oudste rij — de sheet groeit dus niet onbeperkt. Om een lager plafond te gebruiken (bv. 2000 of 5000), volstaat het die ene constante in het script aan te passen en opnieuw te implementeren (zie hierboven, URL blijft dan gelijk).
+
 ---
 
 ## 7. Openstaande punten
 
-- [ ] **Nieuw Apps Script (`SJALAY_SHEETS_LOGGER.gs`) implementeren en de Google Script-URL bijwerken in Settings** (zie 6.1) — anders faalt de Sheets-logging na het flashen van v1.2 (oud script verstaat het nieuwe compacte schema niet)
-- [ ] **v1.2-sketch testen op het thuisnetwerk** (compact `/json`-schema, herschikte statuspagina, instelbare Sheets-interval, boiler-setpoint 10-60°C, verwarmings-setpoint 5-30°C) — nog niet apart getest sinds de v1.0/v1.1/v1.2-wijzigingen
+- [x] ~~Nieuw Apps Script (`SJALAY_SHEETS_LOGGER.gs`) implementeren en de Google Script-URL bijwerken in Settings~~ — **gedaan (1/10/2026)**, zie 6.1 voor de actieve URL. **v1.2-sketch is hiermee klaar voor productie in Recht.**
 - [ ] Bestaande brug over E1 verwijderen vóór het relais aan te sluiten (zie 1.2)
 - [ ] Relais-1-test met ESP32 (IO10) op de echte E1-klemmen
 - [ ] Omschakeling uitvoeren: HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
