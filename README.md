@@ -2,7 +2,7 @@
 
 **Locatie:** Sjalay (Recht) — geen permanente WiFi/fiber, gevoed via 4G  
 **Basis:** ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf  
-**Laatst bijgewerkt:** 30 sep 2026
+**Laatst bijgewerkt:** 1 okt 2026
 
 Dit is geen los "ketel-projectje" meer: de Sjalay-controller doet ondertussen vier dingen tegelijk in het vakantiehuis:
 
@@ -204,6 +204,54 @@ sudo nmcli con up "netplan-wlan0-sjalayke"
 Bevestigd met `ip addr show wlan0` → `inet 192.168.50.2/24 ... valid_lft forever`. `.2` gekozen als eerste vrije adres net boven de gateway (`.1`), buiten het bereik van de ESP32/Shelly's (`.10`-`.14`) en de DHCP-pool.
 
 **Wachtwoord gewijzigd (30/09) ✅** — het fabriekswachtwoord `raspberry` is vervangen door `fidel2026` via `passwd` (rechtstreeks op de Pi, over SSH). Hiermee is het eerder gesignaleerde beveiligingsrisico (bekend/geraden fabriekswachtwoord bereikbaar vanop afstand via Tailscale) opgelost.
+
+**VNC:** standaard niet actief op deze Pi (headless opzet, enkel SSH) — bij een poging tot verbinden met een VNC-viewer geeft dit "connection refused" (niets luistert op de VNC-poort). SSH is voorlopig voldoende voor deze toepassing; een VNC-server (RealVNC Server via `raspi-config`) kan later alsnog geactiveerd worden, mocht dat ooit nodig zijn.
+
+### 3.2 SD-kaart backup
+
+**Huidige kaart:** vermoedelijk 8GB in de Sjalay-Pi. Een nieuwe 32GB-kaart staat klaar in Zarlardinge om een backup op te maken.
+
+**Niet via SSH/Tailscale op afstand vanuit Zarlardinge doen:** de Sjalay-Pi zit achter een Telenet ONE **data-SIM** (4G) met beperkt databudget en een trage upload-richting — een volledige kaart-image (ook al is die grotendeels leeg) wegstreamen zou veel data verbruiken en lang duren.
+
+**Beter: ter plaatse bij Sjalay doen**, op het moment dat er toch iemand aanwezig is, via één van deze twee routes (geen van beide gebruikt de 4G-uplink, dus geen data-verbruik op de SIM):
+
+1. **Lokaal via SSH over het Sjalay-wifi:** laptop op hetzelfde `192.168.50.x`-netwerk als de Pi (niet via Tailscale/4G), dan een image van de live SD-kaart wegschrijven naar een bestand op de laptop (`dd` over SSH). Werkt zonder de Pi uit te schakelen, al is het netjes om tijdens het imagen weinig schrijfactiviteit op de Pi te hebben voor een zo consistent mogelijke kopie.
+2. **Nog eenvoudiger: USB-SD-kaartlezer rechtstreeks op de Pi**, en lokaal (zonder enig netwerkverkeer, enkel SSH-commando's op de Pi zelf) van de ene kaart naar de andere klonen.
+
+**Stappenplan voor optie 2 (USB-kaartlezer, lokaal klonen op de Pi zelf):**
+
+1. **Nieuwe 32GB-kaart in de USB-kaartlezer steken** en die in een USB-poort van de Pi prikken. Via SSH op de Pi inloggen, dan de schijven identificeren:
+   ```
+   lsblk
+   ```
+   De systeemkaart (waar de Pi zelf van draait) is `/dev/mmcblk0`. De nieuwe kaart via de USB-lezer verschijnt normaal als `/dev/sda` — **controleer dit altijd via de grootte** in de `lsblk`-output (de nieuwe kaart is 32G, de systeemkaart 8G) vóór je verdergaat. Bij verwisseling van bron/doel overschrijf je per ongeluk je eigen systeemkaart.
+
+2. **Klonen met `dd`** (pas `of=` aan als de nieuwe kaart niet op `/dev/sda` staat):
+   ```
+   sudo dd if=/dev/mmcblk0 of=/dev/sda bs=4M status=progress conv=fsync
+   ```
+   - `bs=4M` = grotere blokken, veel sneller dan de dd-default
+   - `status=progress` = toont voortgang tijdens het kopiëren
+   - `conv=fsync` = forceert alles echt weg te schrijven vóór het commando eindigt
+   - Duurt voor 8GB doorgaans een paar minuten, afhankelijk van de snelheid van de USB-kaartlezer
+
+3. **Wachten tot het commando vanzelf stopt** (geen voortijdig uittrekken!) en daarna nog een keer expliciet synchroniseren:
+   ```
+   sync
+   ```
+
+4. **Kaart veilig uitwerpen** vóór je ze uit de lezer haalt:
+   ```
+   sudo eject /dev/sda
+   ```
+
+5. **(optioneel maar aan te raden) Verificatie** dat de kopie identiek is — vergelijkt enkel de eerste 8GB (de grootte van de bron), de rest van de 32GB-kaart blijft ongebruikt tot de partitie later uitgebreid wordt:
+   ```
+   sudo cmp <(sudo dd if=/dev/mmcblk0 bs=4M) <(sudo dd if=/dev/sda bs=4M count=$(( $(sudo blockdev --getsz /dev/mmcblk0) / 8192 )))
+   ```
+   Geen output = identiek. Dit is optioneel; voor een routinematige backup volstaat meestal al dat `dd` zonder foutmelding is doorgelopen.
+
+**Nadien:** de 32GB-kaart is groter dan de huidige 8GB — na het terugzetten van het image moet de partitie/het bestandssysteem nog uitgebreid worden om de volledige 32GB te benutten (automatisch bij eerste boot met Raspberry Pi Imager, of handmatig via `raspi-config` → "Expand Filesystem").
 
 ---
 
@@ -446,34 +494,17 @@ Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Go
 
 ## 7. Openstaande punten
 
-- [x] E1 fysiek gelokaliseerd op de ketel (geel klemblokje) + elektrisch bevestigd (0V=gesloten/5V=open)
-- [x] HG13 op de BM nagekeken en bevestigd op waarde 1 (vakmancode = 1, uit Montageanleitung; 29/09)
-- [x] Vorstbeveiliging bij E1-open bevestigd (Sommerbetrieb = Pumpenstandschutz + Frostschutz actief; 29/09) — praktische wintertest blijft aangeraden
-- [ ] **Bestaande brug over E1 verwijderen** vóór het relais aan te sluiten (zie 1.2)
+- [ ] Bestaande brug over E1 verwijderen vóór het relais aan te sluiten (zie 1.2)
 - [ ] Relais-1-test met ESP32 (IO10) op de echte E1-klemmen
-- [x] Shelly-stopcontacten vast IP toegekend en gekoppeld via `/settings` (4 stuks, 29/09, meteen werkend)
-- [x] **Sketch v0.11 gebouwd:** SWW-relais (IO2), boilersensor-rol, boiler-setpoint, hysterese (beide circuits), veiligheidslagen, alle-DS-sensoren-lijst (29/09)
-- [x] **SWW-blokkeerstrategie vastgelegd (30/09):** relais 2 → SF-klem (Speicherfühler, HG24=3), zie 1.4
-- [x] Fabriekssensor op SF-klem bevestigd aanwezig + doorgemeten (2,52V bij 49°C, 30/09) — zie 1.4
-- [x] HG24 bevestigd bereikbaar op de BM, staat nog op 1 (30/09) — zie 1.4
-- [ ] **Omschakeling uitvoeren:** HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
-- [ ] **Thuis (Zarlardinge):** wandmontagebox inbouwen (shield + relaismodule op plankje, doorvoeropeningen voorboren) — zie 1.5
-- [ ] **Thuis (Zarlardinge):** DS18B20 met 3× 10cm draad solderen op de T-bus (kelder-/omgevingssensor, net buiten de box) — zie 1.5
-- [ ] **Boilersensor fysiek bedraden** op de verlengdraad (parallel OneWire) en toewijzen in Settings
+- [ ] Omschakeling uitvoeren: HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
+- [ ] Thuis (Zarlardinge): wandmontagebox inbouwen (shield + relaismodule op plankje, doorvoeropeningen voorboren) — zie 1.5
+- [ ] Thuis (Zarlardinge): DS18B20 met 3× 10cm draad solderen op de T-bus (kelder-/omgevingssensor, net buiten de box) — zie 1.5
+- [ ] Boilersensor fysiek bedraden op de verlengdraad (parallel OneWire) en toewijzen in Settings
 - [ ] T-bus-testsensor (kelder/ESP-box) evt. definitief vastsolderen indien behouden
 - [ ] Na bedrading: hysterese-defaults (1,0°C CV / 5,0°C SWW) in de praktijk evalueren, bijstellen indien nodig
 - [ ] Definitieve montage (behuizing in de kelder)
-- [x] **Zarlar-Pi omgeschakeld naar volledige subnet-router** (naast de bestaande Funnel) — subnet `192.168.0.0/24` geadverteerd, goedgekeurd en bevestigd bereikbaar vanop afstand (30/09) — zie 3
-- [x] **Sketch v0.12 gebouwd:** eenvoudige landingspagina op `/` voor gasten/huurders, Status-pagina verhuisd naar `/advanced` (29/09)
-- [x] **Sketch v0.13 gebouwd:** IST+SOLL samen op één lijn in kaartkleur, overbodige lampje-/sectie-iconen weg (29/09)
-- [x] **Sketch v0.14 gebouwd:** mDNS/Bonjour (`sjalay.local`, naam instelbaar in Settings) (29/09)
-- [x] **Sketch v0.15 gebouwd:** bed-modus/nachtmodus-knop toegevoegd aan de landingspagina (29/09)
-- [x] **SSH-toegang tot de Pi bevestigd vanop afstand**, zowel via Tailscale-IP als lokaal IP (30/09) — zie 3.1
-- [x] **Lokaal IP van de Pi vastgezet op `192.168.50.2`** via NetworkManager (30/09) — zie 3.1
-- [x] **Pi-wachtwoord gewijzigd** naar `fidel2026` via `passwd` (30/09) — zie 3.1
-- [x] **Sketch v0.16 gebouwd:** AUTO/MANUEEL-knop voor pixel 0 toegevoegd aan de landingspagina (30/09) — zie 5.11
-- [x] **Landingspagina functioneel getest op het thuisnetwerk** (factory reset, volledige RoomSense via RJ45): PIR/AUTO-modus en de nieuwe AUTO/MANUEEL-knop bevestigd werkend (30/09)
 - [ ] Landingspagina in de praktijk testen met een echte gast/huurder, UI eventueel verder bijstellen
 - [ ] mDNS in de praktijk testen (na flashen): `http://sjalay.local/` openen vanaf een gewone smartphone/laptop op het Sjalay-netwerk
+- [ ] SD-kaart backup maken (8GB → 32GB), ter plaatse bij Sjalay — zie 3.2
 - [ ] *(toekomst, niet urgent)* Stroom-/spanningsmeting per pixel via Shelly's tonen in UI — zie 5.7, nog niet nodig
 - [ ] *(toekomst, niet urgent)* Overige Shelly-toestellen (Flood, H&T, …) evalueren als aanvulling — zie 5.7, nog niet nodig
