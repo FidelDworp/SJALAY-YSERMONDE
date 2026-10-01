@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.2 — 1 okt 2026
+// SJALAY CONTROLLER — v1.3 — 1 okt 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -51,6 +51,12 @@
 //                - Nieuw Apps Script (zie README) hoort bij dit schema — het vorige
 //                  script (lange sleutelnamen) is niet langer compatibel.
 // ----------------------------------------------------------------------------
+// v1.3 (1okt26): - Extra veld "y" (effectieve setpoint incl. dauwpuntcorrectie) terug
+//                  toegevoegd aan /json — enkel voor de live-UI (landingspagina toont
+//                  hiermee weer meteen de echte doeltemp i.p.v. de ruwe ingestelde
+//                  setpoint, net als vóór v1.2). Bewust NIET opgenomen in het Apps
+//                  Script, dus niet gelogd naar Google Sheets.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -72,7 +78,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.2"
+#define SJALAY_VERSION "1.3"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -776,18 +782,19 @@ String getJSON() {
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
   char pixAan[MAX_PIXELS + 3];
   snprintf(pixAan, sizeof(pixAan), "P=%s", pon);  // "P="-prefix: appendRow() in Sheets bewaart zo leidende nullen
-  char buf[420];
+  char buf[440];
   snprintf(buf, sizeof(buf),
     "{\"room\":\"%s\","
     "\"a\":%lu,\"b\":%d,\"c\":%d,\"d\":%.1f,\"e\":%.1f,\"f\":%.1f,\"g\":%.1f,\"h\":%d,"
     "\"i\":%d,\"j\":%d,\"k\":%.1f,"
     "\"l\":%d,\"m\":%d,\"n\":%d,\"o\":%d,\"p\":%d,\"q\":%d,\"r\":\"%s\",\"s\":%d,\"t\":%d,"
-    "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d}",
+    "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d,\"y\":%.1f}",
     room_id,
     upt, heating_on ? 1 : 0, heating_setpoint, room_temp, t2_j, h_j, dew, dew_alert ? 1 : 0,
     sww_on ? 1 : 0, boiler_setpoint, temp_boiler,
     light_ldr, nacht ? 1 : 0, bed ? 1 : 0, (int)neo_r, (int)neo_g, (int)neo_b, pixAan, pixel0_mode, mov1_triggers,
-    ap_mode_active ? 0 : WiFi.RSSI(), (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024), ds_count);
+    ap_mode_active ? 0 : WiFi.RSSI(), (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024), ds_count,
+    effective_setpoint);  // y: effectieve setpoint (dauwpuntcorrectie) — enkel voor live-UI, bewust niet gelogd naar Sheets
   return String(buf);
 }
 
@@ -966,7 +973,7 @@ void handleLanding(AsyncWebServerRequest *request) {
     "onchange=\"setVal('/set_setpoint',this.value)\"></form></div>",
     heating_on ? " active" : "",
     room_temp_reliable ? (String(room_temp, 1) + "&deg;").c_str() : "n.v.t.",
-    heating_setpoint, heating_setpoint);
+    (int)round(effective_setpoint), heating_setpoint);
 
   // ---- SWW ----
   // Idem: groot IST (gemeten boilertemp), klein "(-> X°)" = SOLL (setpoint; voor SWW
@@ -1016,7 +1023,7 @@ void handleLanding(AsyncWebServerRequest *request) {
           "if(i==0){var ic=t.querySelector('.ic');if(ic)ic.innerHTML=locked?'&#127769;':'&#128161;';}"
         "}"
         "var vr=document.getElementById('v-rt');if(vr)vr.textContent=data.d.toFixed(1)+'°';"
-        "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+data.c+'°)';"
+        "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+Math.round(data.y)+'°)';"
         "var hs=document.getElementById('sl-hsp');if(hs&&document.activeElement.id!=='sl-hsp')hs.value=data.c;"
         "var ih=document.getElementById('ic-heat');if(ih)ih.className='icring'+(data.b?' active':'');"
         "var vb=document.getElementById('v-bt');if(vb)vb.textContent=data.k.toFixed(1)+'°';"
