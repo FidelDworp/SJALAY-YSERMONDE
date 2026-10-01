@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v0.16 — 30 sep 2026
+// SJALAY CONTROLLER — v1.2 — 1 okt 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -10,170 +10,46 @@
 //              Partition Scheme = Custom (partitions.csv), USB CDC On Boot = Enabled
 //
 // ----------------------------------------------------------------------------
-// BOUWSTAPPEN SJALAY-SKETCH (afgeleid van ESP32_C6_MATTER_ROOM + HVAC-sketch,
-// sterk vereenvoudigd — zie overnamedossier README.md):
-//   [x] STAP 1 — Platformlaag: Wi-Fi STA + AP-fallback/captive portal, NVS-config,
-//                NTP, AsyncWebServer, OTA, factory reset (web+serial), crash-log,
-//                basis web-UI (Status/OTA/JSON/Settings). GEEN sensoren/relais/pixels.
-//   [x] STAP 2 — Sensoren: DHT22, DS18B20 (multi), LDR1, PIR MOV1
-//   [x] STAP 3 — Verwarmingslogica + relais IO10 (WOLF E1)
-//   [x] STAP 4 — Powerpixels IO4 (fade-engine, AUTO/manueel, bed-modus)
-//   [x] STAP 5 — Volledige status-UI + compact /json schema
-//   [x] STAP 6 — Google Sheets POST elke 5 min
-//   [x] STAP 7 — Settings-uitbreiding + opkuis/review
-//   [x] STAP 8 — Optionele Shelly-stopcontacten per pixel (lokale HTTP, geen cloud)
-//   [x] STAP 9 — SWW-relais (IO2), boilersensor, hysterese, veiligheidsgrenzen
-//
-// v0.16  (30sep26): Nieuwe ronde knop op de landingspagina om Pixel 0 (MOV1) vanop "/" ook terug
-//                   naar AUTO te kunnen zetten. Voorheen kon je op de landingspagina enkel
-//                   (impliciet, door de tegel aan te raken) naar MANUEEL schakelen, maar er was
-//                   geen weg terug zonder naar /advanced te gaan. Zelfde vorm/grootte als de
-//                   bed-knop (52px, rond), er onmiddellijk naast geplaatst. Icoon: 🔄 (&#128260;)
-//                   in AUTO, ✋ (&#9995;) in MANUEEL — de knop licht op (zelfde stijl als de
-//                   bed-knop, andere kleur) zolang MANUEEL actief is. Hergebruikt volledig het
-//                   bestaande /toggle_pixel_mode-endpoint (al aanwezig sinds v0.2, voordien enkel
-//                   bereikbaar via /advanced) en het /json-veld "p0m" (al aanwezig) — geen
-//                   nieuwe backend-logica, enkel een knop + live icoonwissel op de landingspagina.
-// v0.15  (29sep26): Bed-modus/nachtmodus toegevoegd aan de landingspagina, zodat gasten kunnen
-//                   voorkomen dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts
-//                   automatisch aangaat. Nieuwe ronde knop (🛏️, &#128719;), even groot als de
-//                   kleurkiezer (52px) en er onmiddellijk links naast geplaatst. Hergebruikt
-//                   volledig de bestaande bed-variabele/NVS-veld en het /toggle_bed-endpoint
-//                   (al aanwezig sinds v0.9, voordien enkel bereikbaar via /advanced) — geen
-//                   nieuwe backend-logica nodig, de bestaande updatePixelLogic() forceert
-//                   pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens
-//                   bed-modus getoond als "vergrendelde" tegel (maan-icoon, gedimd, geen
-//                   tik-actie) i.p.v. een tegel die een tik toch zou negeren, en de bed-knop
-//                   licht op (donkerblauw) zolang bed-modus actief is. Alles synct live mee via
-//                   het bestaande /json-veld "bed" (al aanwezig sinds v0.9).
-// v0.14  (29sep26): mDNS/Bonjour toegevoegd (<ESPmDNS.h>) — de controller is voortaan ook
-//                   bereikbaar via http://<naam>.local/ i.p.v. enkel het kale IP-adres.
-//                   Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"),
-//                   opgeslagen in NVS ("mdns_name"), enkel a-z/0-9/streepjes toegelaten
-//                   (sanitizeMdnsName(): kleine letters geforceerd, ongeldige tekens weg,
-//                   geen leidend/sluitend streepje, terugval "sjalay" bij lege/ongeldige
-//                   invoer - een wijziging wordt dus nooit een onbruikbare hostnaam). mDNS
-//                   wordt gestart in setup() na een geslaagde Wi-Fi-verbinding (niet in
-//                   AP-setup-modus, daar is het kale 192.168.4.1 toch al vast); een nieuwe
-//                   naam vereist een herstart, net als de andere Settings-velden. Zichtbaar
-//                   op de Advanced-statuspagina (naast IP-adres) en in /json ("mdns").
-// v0.13  (29sep26): Landingspagina bijgeschaafd na feedback (2 rondes): (1) IST (huidige
-//                   gemeten temp) en SOLL (effectieve/gevraagde doeltemp) nu samen op één
-//                   lijn i.p.v. twee losse regels — groot IST eerst, in de kaartkleur
-//                   (oranje/blauw), gevolgd door SOLL kleiner tussen haakjes met een spatie
-//                   ervoor, bv. "21.3° (-> 21°)" — leesbaarder dan de vorige kleine grijze
-//                   regel eronder. (2) De overbodige sectie-iconen boven de verwarmings-/
-//                   SWW-kaart zijn weg (stonden dubbel met het icoon op de kaart zelf), en
-//                   het lampje-icoon boven de lichten-tegels is ook verwijderd (stond dubbel
-//                   met de lampjes op de tegels zelf).
-// v0.12  (29sep26): Eenvoudige landingspagina op "/" voor huurders/gasten — enkel wat zij
-//                   echt nodig hebben: grote licht-tegels (aan/uit + kleurkiezer), en voor
-//                   verwarming/SWW een groot cijfer met de HUIDIGE (gemeten) temperatuur,
-//                   een kleine "-> X°"-regel met de effectieve/gevraagde doeltemp, en de
-//                   setpoint-schuifregelaar (géén Auto/Handmatig-schakelaars of los relais
-//                   zichtbaar, géén overbodige sectie-icoontjes naast de toch al grote
-//                   vlam/watersproeier-iconen op de kaarten zelf). Bij ELKE keer laden van
-//                   "/" worden beide regelkringen geforceerd naar Auto gezet (NVS enkel
-//                   beschreven bij een echte wissel), zodat een gast nooit per ongeluk in
-//                   Handmatig vastzit. De technische Status-pagina verhuisde van "/" naar
-//                   "/advanced" (zelfde inhoud/gedrag, enkel het pad wijzigde); bereikbaar
-//                   via een klein tandwiel-icoon onderaan de landingspagina. Status/OTA/
-//                   Settings kregen op hun beurt een huisje-icoon in de sidebar dat
-//                   terugleidt naar "/". Pixel 0 (MOV1): aanraken vanop de landingspagina
-//                   terwijl hij nog in AUTO staat, schakelt hem nu impliciet naar MANUEEL
-//                   (geen gedragswijziging op de Advanced-pagina, waar die knop toch al
-//                   enkel zichtbaar was in MANUEEL).
-// v0.11  (29sep26): SWW-regeling via tweede relais (IO2 -> SWW-laadpomp, 230V,
-//                   4-relaismodule). Nieuwe boilersensor-rol (los van de primaire
-//                   kamersensor) instelbaar in Settings, met eigen setpoint-slider
-//                   (40-60°C, Status-pagina). Automatisch/Handmatig-modus voor
-//                   relais 2, analoog aan de verwarming. ECHTE hysterese ingevoerd
-//                   voor BEIDE circuits (voorheen enkel een vaste -0.5°C-offset
-//                   zonder aparte aan/uit-drempel -> pendelde constant): symmetrische
-//                   band rond de setpoint, instelbaar in Settings (default 1,0°C
-//                   verwarming, 5,0°C SWW). Twee onafhankelijke veiligheidslagen,
-//                   ALTIJD actief ongeacht Auto/Handmatig: (1) geforceerd UIT zodra
-//                   de gemeten temp de bovengrens van de bijhorende setpoint-slider
-//                   bereikt (30°C resp. 60°C); (2) geforceerd UIT bij onbetrouwbare
-//                   temperatuurdata (kamer: DS+DHT22 beide defect; boiler: geen
-//                   bruikbare sensor, geen terugval mogelijk). Sensor-"ontbrekend"
-//                   pas na 3 opeenvolgende mislukte lezingen (voorkomt trigger door
-//                   een toevallige CRC-glitch). Alle gevonden DS18B20's (niet enkel
-//                   de toegewezen rollen) nu zichtbaar met naam+temp op Status en in
-//                   /json ("dsl"-array).
-// v0.10  (28sep26): Optionele koppeling met Shelly-slimme-stopcontacten per pixel.
-//                   Settings: extra veld per pixel "ip:naam,ip:naam" (max 3 Shelly's
-//                   per pixel). Bij elke effectieve AAN/UIT-wissel van een pixel
-//                   (rand-detectie, niet elke lus) stuurt de sketch een korte lokale
-//                   HTTP-GET naar elk gekoppeld IP (http://ip/relay/0?turn=on|off,
-//                   compatibel met Shelly Gen1/2/3, geen cloud/account nodig). Op de
-//                   statuspagina staat naast elke pixel de naam van de gekoppelde
-//                   stopcontacten. Geen retry/terugkoppeling (fire-and-forget, net als
-//                   de Sheets-log) — korte timeout (1-1,5s) zodat een onbereikbare
-//                   Shelly de lus niet blokkeert.
-// v0.9   (27sep26): BUGFIX pixel 0 — geen firmwarebug, maar onzichtbaar gedrag:
-//                   bed-modus dwingt pixel 0 altijd uit (ook in MANUEEL, per
-//                   ontwerp), maar dat was in de UI niet te zien -> de AAN/UIT-
-//                   schakelaar leek "terug te springen" terwijl bed-modus gewoon
-//                   nog actief stond van een eerdere test. Nu een aparte rij die
-//                   dit expliciet toont zodra bed-modus actief is, met een
-//                   snelknop om ze meteen uit te zetten.
-// v0.8   (27sep26): STAP 7 afgerond:
-//                   - Pixel 0 AAN/UIT-schakelaar herwerkt: gebruikt nu dezelfde
-//                     class="cb-pix"/class="pixdot" aanpak als de andere pixels
-//                     i.p.v. een apart id-gebaseerd pad — voorheen kon de rij bij
-//                     wissel AUTO->MANUEEL onzichtbaar/verward blijven; nu 1 rij
-//                     voor MANUEEL (met schakelaar) en 1 statusrij voor AUTO,
-//                     beide aangestuurd door dezelfde /json-lus als pixels 1+.
-//                   - DS18B20: nicknames en primaire sensor nu echt instelbaar in
-//                     Settings (tekstvelden + dropdown), verwerkt in /save_settings.
-//                     Placeholder-tekst "volgt in een latere stap" verwijderd.
-//                   - LDR donker-drempel nu instelbaar in Settings (was vaste
-//                     interne waarde 40).
-//                   - Duty-cyclus verwarming: 4u sliding window (12x20min),
-//                     percentage in /json ("duty") en Sheets-log, zichtbaar in UI.
-//                   - "Nog te bouwen"-blok op statuspagina verwijderd (alles klaar).
-// v0.7.1 (26sep26): Compile-fix — HTTPC_STRICT_REDIRECTS bestaat niet in ESP32 core
-//                   3.3.12; correcte naam is HTTPC_STRICT_FOLLOW_REDIRECTS.
-// v0.7   (26sep26): BUGFIXES — AAN/UIT-labels naast Automatisch/Relais-handmatig/Bed
-//                   bleven hangen bij een toggle (ontbrekende id, nu gefixt). Pixel 0
-//                   herwerkt: schakelaar wisselt nu tussen AUTO/MANUEEL (was AUTO/AAN);
-//                   in MANUEEL verschijnt een aparte AAN/UIT-schakelaar voor pixel 0,
-//                   net als bij de andere pixels — voorheen kon pixel 0 in "manueel"
-//                   alleen AAN staan. STAP 6 — Google Sheets-logging: compacte JSON-POST
-//                   elke 5 min naar een Apps Script-webhook (URL instelbaar, leeg = uit).
-// v0.6   (26sep26): UI-stijl nu exact zoals ROOM/HVAC-sketch: witte pagina, gele
-//                   header, dunne rode lijn links met witte sidebar + blauwe knoppen
-//                   (actief = rood), lichtblauwe waarde-kolom (td.value), 3-koloms
-//                   label/waarde/bediening-tabellen. Kleurkiezer past de kleur nu
-//                   rechtstreeks toe bij het kiezen (zoals ROOM-sketch), geen aparte
-//                   "instellen"-stap meer nodig. BUGFIX: /json gaf de vrije heap en
-//                   het grootste blok in bytes door i.p.v. KB (UI toonde ×1024 te
-//                   grote waarden) — nu correct gedeeld door 1024.
-// v0.5   (26sep26): Volledige live-UI zoals ROOM-sketch — AJAX-schakelaars/sliders
-//                   (submitAjax), /json-polling elke 3s (id-based, geen page-reload),
-//                   kleurendots op pixels, onafhankelijke klok. Schoonheidsfoutjes
-//                   verholpen: kleurkiezer toont/behoudt nu de actuele kleur i.p.v. naar
-//                   zwart te springen bij ongewijzigd indienen; setpoint-form zat foutief
-//                   rond een <tr> genest (ongeldige HTML) — nu correct binnen de <td>.
-// v0.4   (26sep26): Powerpixels IO4 toegevoegd — fade-engine (sin-ease, 1-10s), tot 30
-//                   pixels, pixel 0 = AUTO (MOV1+LDR-donker) of manueel AAN, pixels 1+
-//                   manueel aan/uit, bed-modus (dwingt pixel 0 uit), RGB-kleurkiezer,
-//                   licht-aan-tijd 0-30min. Rechtstreeks overgenomen uit ROOM-sketch,
-//                   zonder MOV2 (Sjalay heeft maar 1 PIR).
-// v0.3   (26sep26): Verwarmingslogica + relais IO10 (WOLF E1). Fail-safe: relais open
-//                   vóór alles bij boot, en blijft UIT tot je hem bewust aanzet. Twee modi:
-//                   "Automatisch" (softwarethermostaat, dauwpuntbeveiliging) of "Handmatig"
-//                   (default — directe AAN/UIT-schakelaar in UI, voor test zonder sensoren).
-//                   LET OP: uitgegaan van actief-laag relaismodule (RELAY_ACTIVE_LOW) —
-//                   pas die ene #define aan als jouw module actief-hoog is.
-// v0.2   (26sep26): Sensoren toegevoegd — DHT22 (temp+vocht+dauwpunt), DS18B20 multi
-//                   (scan/CRC/fallback), LDR1 (0-100, donker=100), PIR MOV1 (trig/min).
-//                   Werkt ook zonder aangesloten RoomSense shield: DHT-NaN en DS-count=0
-//                   worden gedetecteerd en als "defect/niet gevonden" getoond, geen crash.
-// v0.1.1 (26sep26): Fix — AP-SSID "Sjalay-Setup" was verborgen (ssid_hidden niet expliciet
-//                   op false gezet). Nu expliciet zichtbaar via volledige softAP()-aanroep.
-// v0.1   (26sep26): Initiële platformlaag. Geen Matter, geen TSTAT, geen sensoren.
+// v1.0 (1okt26): Eerste opgekuiste release — volledige versiegeschiedenis (v0.1-v0.16)
+//                en de bouwstappen-checklist uit deze header verwijderd; zie README.md
+//                voor de volledige ontwikkelgeschiedenis. Wijzigingen t.o.v. v0.16:
+//                - Controller-sectie verhuisd naar helemaal onderaan de statuspagina.
+//                - SWW-sectie hernoemd naar "SWW boiler"; setpoint-bereik 10-60°C
+//                  (was 40-60°C), zowel op /advanced als op de landingspagina.
+//                - HVAC-sectie volledig opgesplitst en opgeheven: DHT22-/DS18B20-
+//                  kamerdata verhuisd naar de Verwarmingssectie, incl. een nieuwe
+//                  samengevoegde "Kamertemperatuur (bron: ...)"-regel (i.p.v. de twee
+//                  losse regels "DS18B20 primair" + "Room temp") en een "Effectieve
+//                  setpoint met % vochtigheid"-regel; de Melding-regel toont voortaan
+//                  altijd een statuszin i.p.v. enkel bij een fout. "DS18B20 gevonden"
+//                  verhuisd naar "Alle DS18B20-sensoren".
+//                - Verlichting samengevoegd met Powerpixels tot 1 sectie; "LDR1
+//                  (donker=100)" hernoemd naar "OMGEVINGSLICHT (donker=100)".
+//                - Google Sheets-interval nu instelbaar in Settings (was vast 5 min);
+//                  het PIR-telvenster en de labels ("trig/X min") volgen die waarde.
+// ----------------------------------------------------------------------------
+// v1.1 (1okt26): - Verwarmings-setpoint-slider: minimum 5°C (was 10°C), op /advanced
+//                  en de landingspagina.
+//                - Sectietitel "Verwarming / relais (WOLF E1)" vereenvoudigd naar
+//                  "Verwarming"; "Powerpixels" hernoemd naar "Verlichting".
+//                - /settings: volgorde "Herscan DS18B20-bus" en "Opslaan & herstart"
+//                  omgewisseld.
+//                - Landingspagina: vlam-/douche-icoon (verwarming/SWW) nu in een
+//                  statuscirkel (wit = rust, lichtrood/rode rand = ketelvraag/pomp
+//                  actief) i.p.v. een los kleurbolletje naast het icoon.
+// ----------------------------------------------------------------------------
+// v1.2 (1okt26): - /json volledig herwerkt naar een compact schema met positionele
+//                  sleutels (a, b, c, ... + "room"), in dezelfde stijl als het
+//                  Zarlar-roomproject — i.p.v. de lange beschrijvende sleutels.
+//                  Dit ene schema voedt zowel de live-UI (/advanced + landingspagina)
+//                  als de Google Sheets-log.
+//                - Bewust weggelaten uit de live-JSON (blijven wel zichtbaar bij het
+//                  laden van de pagina): betrouwbaarheids-/fallback-vlaggen, tekstuele
+//                  meldingen, IP/mDNS/crash-teller/firmwareversie, Auto/Handmatig-
+//                  togglestatus, hysterese-waarden, per-sensor-detail van niet-
+//                  toegewezen DS18B20's, Sheets-/PIR-intervaltekst en duty-cyclus.
+//                - Nieuw Apps Script (zie README) hoort bij dit schema — het vorige
+//                  script (lange sleutelnamen) is niet langer compatibel.
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -196,7 +72,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "0.16"
+#define SJALAY_VERSION "1.2"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -249,14 +125,16 @@ float temp_boiler = 0;
 int light_ldr = 0;
 int mov1_triggers = 0;
 char temp_melding[48] = "";
+char room_source[40] = "";         // naam van de sensor die room_temp momenteel levert (DS-naam of "DHT22 (fallback)")
 char boiler_melding[48] = "";
 bool room_temp_reliable = true;    // false = kamer-DS én DHT22 beide defect -> verwarming geblokkeerd
+bool room_temp_fallback = false;   // true = DS18B20 (kamer) uitgevallen, DHT22 neemt het over
 bool boiler_temp_reliable = true;  // false = geen bruikbare boilersensor -> SWW-pomp geblokkeerd
 
 // Verwarmingslogica / relais 1 (WOLF E1)
 bool heating_auto = false;        // false = handmatige modus (default, voor test zonder sensoren)
 bool relay_manual = false;        // gewenste relaisstaat in handmatige modus
-int heating_setpoint = 20;        // gewenste temp in automatische modus (10-30)
+int heating_setpoint = 20;        // gewenste temp in automatische modus (5-30)
 float dew_margin = 2.0;           // dauwpunt-veiligheidsmarge (°C)
 bool heating_on = false;          // huidige relaisstaat (= ketelvraag)
 float effective_setpoint = 20.0;  // laatst berekende effectieve setpoint (voor display)
@@ -283,6 +161,8 @@ unsigned long duty_last_tick = 0;
 char gas_url[200] = "";           // Apps Script webhook-URL; leeg = uitgeschakeld
 int sheets_last_code = 0;         // laatste HTTP-resultaatcode (0 = nog niet geprobeerd)
 unsigned long sheets_last_post = 0;  // millis() van laatste poging
+int sheets_interval_min = 5;      // instelbaar in Settings (1-60 min), default 5 — PIR-telvenster volgt deze waarde
+inline unsigned long sheetsIntervalMs() { return (unsigned long)sheets_interval_min * 60000UL; }
 
 // ============== POWERPIXELS ==============
 #define MAX_PIXELS 30
@@ -322,8 +202,10 @@ const int FADE_NUM_STEPS = 20;
 unsigned long fade_interval_ms = 100;
 unsigned long lastFadeStep = 0;
 
-// PIR-triggerbuffer (voor trig/min telling)
-#define MOV_BUF_SIZE 20
+// PIR-triggerbuffer (voor trig/X-min telling, venster = sheets_interval_min).
+// Vergroot t.o.v. v0.16 (was 20) zodat ook bij een langer interval en frequente
+// beweging de teller niet ondertelt doordat oudere triggers al verdrongen zijn.
+#define MOV_BUF_SIZE 60
 unsigned long mov1Times[MOV_BUF_SIZE] = {0};
 int mov1_prev_state = HIGH;  // vorige PIR-staat, voor flankdetectie
 
@@ -429,10 +311,10 @@ void pushEvent(unsigned long *buf, int size) {
   buf[0] = millis();
 }
 
-int countRecent(unsigned long *buf, int size) {
+int countRecent(unsigned long *buf, int size, unsigned long windowMs) {
   int c = 0;
   unsigned long now = millis();
-  for (int i = 0; i < size; i++) if (buf[i] > 0 && now - buf[i] < 60000) c++;
+  for (int i = 0; i < size; i++) if (buf[i] > 0 && now - buf[i] < windowMs) c++;
   return c;
 }
 
@@ -548,15 +430,22 @@ void readAllSensors() {
                           || (temp_ds < SENSOR_TEMP_MIN) || (temp_ds > SENSOR_TEMP_MAX);
   room_temp = temp_ds;
   temp_melding[0] = '\0';
+  room_source[0] = '\0';
   room_temp_reliable = true;
+  room_temp_fallback = primary_missing;
   if (primary_missing) {
     room_temp = temp_dht;
-    strncpy(temp_melding, ds_count == 0 ? "Geen DS18B20 gevonden - DHT22 gebruikt" : "DS18B20 (kamer) defect/ontbreekt - DHT22 gebruikt", sizeof(temp_melding) - 1);
+    strncpy(room_source, "DHT22 (fallback)", sizeof(room_source) - 1);
+    strncpy(temp_melding, ds_count == 0 ? "Geen DS18B20 gevonden - DHT22 actief (fallback)" : "DS18B20 (kamer) defect - DHT22 actief (fallback)", sizeof(temp_melding) - 1);
     if (isnan(temp_dht) || temp_dht < SENSOR_TEMP_MIN || temp_dht > SENSOR_TEMP_MAX) {
       room_temp = 0.0;
       room_temp_reliable = false;
+      strncpy(room_source, "geen betrouwbare sensor", sizeof(room_source) - 1);
       strncpy(temp_melding, "Beide temp-sensoren defect - verwarming geblokkeerd!", sizeof(temp_melding) - 1);
     }
+  } else {
+    strncpy(room_source, ds_nicknames[ds_primary], sizeof(room_source) - 1);
+    strncpy(temp_melding, "DS18B20 (kamer) actief", sizeof(temp_melding) - 1);
   }
 
   // --- Boilertemperatuur: enkel de toegewezen DS-sensor, GEEN terugval mogelijk ---
@@ -570,7 +459,7 @@ void readAllSensors() {
     strncpy(boiler_melding, ds_boiler < 0 ? "Geen boilersensor toegewezen - SWW-pomp geblokkeerd" : "Boilersensor defect/ontbreekt - SWW-pomp geblokkeerd", sizeof(boiler_melding) - 1);
   }
 
-  mov1_triggers = countRecent(mov1Times, MOV_BUF_SIZE);
+  mov1_triggers = countRecent(mov1Times, MOV_BUF_SIZE, sheetsIntervalMs());
 }
 
 // ============== VERWARMINGSLOGICA + RELAIS 1 (WOLF E1) ==============
@@ -866,79 +755,39 @@ uint32_t getCrashCount() {
   return cnt;
 }
 
-// ============== JSON HELPERS ==============
-// Minimale escaping (quotes/backslashes) voor vrije-tekstvelden die in JSON-strings belanden
-// (nicknames kunnen door de gebruiker vrij getypt worden in Settings).
-void escapeJSONString(const char *in, char *out, size_t outsize) {
-  size_t o = 0;
-  for (size_t i = 0; in[i] != '\0' && o + 2 < outsize; i++) {
-    if (in[i] == '"' || in[i] == '\\') out[o++] = '\\';
-    if (o + 1 < outsize) out[o++] = in[i];
-  }
-  out[o] = '\0';
-}
-
-// Bouwt een JSON-array met alle gevonden DS18B20's (niet enkel de toegewezen rollen),
-// elk met naam, laatste temp, geldig-deze-lezing, en rol (kamer/boiler/leeg).
-void buildDSListJSON(char *out, size_t outsize) {
-  strlcpy(out, "[", outsize);
-  for (int i = 0; i < ds_count; i++) {
-    if (i > 0) strlcat(out, ",", outsize);
-    char nameEsc[64]; escapeJSONString(ds_nicknames[i], nameEsc, sizeof(nameEsc));
-    bool ok = ds_fail_streak[i] < DS_FAIL_THRESHOLD;
-    const char* role = (i == ds_primary) ? "kamer" : (i == ds_boiler) ? "boiler" : "";
-    char entry[140];
-    snprintf(entry, sizeof(entry), "{\"n\":\"%s\",\"t\":%.1f,\"ok\":%s,\"role\":\"%s\"}",
-      nameEsc, temp_ds_arr[i], ok ? "true" : "false", role);
-    strlcat(out, entry, outsize);
-  }
-  strlcat(out, "]", outsize);
-}
-
 // ============== JSON ==============
-// Compact schema — controller + sensorvelden. Relais/pixel-velden volgen in latere stappen.
+// Compact schema (v1.2) — zelfde stijl als het Zarlar-roomproject: korte positionele
+// sleutels (a, b, c, ...), enkel "room" voluit. Dit ene schema voedt zowel de live-UI
+// (/json, elke 3s op /advanced en /) als de Google Sheets-log (zelfde payload gepost).
+// Leesbare namen staan enkel in het Apps Script / de sheet-kolomkoppen, niet hier.
+// Bewust weggelaten t.o.v. de vorige (uitgebreide) versie: betrouwbaarheids-/fallback-
+// vlaggen, tekstuele meldingen, IP/mDNS/crash/firmware (zelden/nooit live relevant),
+// Auto/Handmatig-togglestatus en hysterese (enkel wijzigbaar via Settings, wat toch al
+// een herstart+redirect veroorzaakt), en per-sensor-detail van niet-toegewezen
+// DS18B20's. Die informatie blijft wel zichtbaar bij het laden van de pagina zelf.
 String getJSON() {
-  char dsl[600];
-  buildDSListJSON(dsl, sizeof(dsl));
-  char buf[1700];
   unsigned long upt = (millis() - boot_millis) / 1000;
-  char tm_esc[48]; strlcpy(tm_esc, temp_melding, sizeof(tm_esc));  // geen quotes/backslashes in melding, dus veilig
-  // NaN (sensor niet aangesloten/defect) mag niet in JSON terechtkomen -> naar 0, t2ok/dsok geven de status
-  bool t2_ok = !isnan(temp_dht) && !isnan(humi) && temp_dht >= SENSOR_TEMP_MIN && temp_dht <= SENSOR_TEMP_MAX
-               && humi >= SENSOR_HUMI_MIN && humi <= SENSOR_HUMI_MAX;
-  bool ds_ok = ds_count > 0;
-  float t2_j = isnan(temp_dht) ? 0.0f : temp_dht;
+  float t2_j = isnan(temp_dht) ? 0.0f : temp_dht;   // NaN mag niet in JSON -> 0
   float h_j  = isnan(humi) ? 0.0f : humi;
+  bool dew_alert = effective_setpoint > (float)heating_setpoint + 0.01f;  // dauwpuntcorrectie actief?
+  bool nacht = light_ldr >= LDR_DARK_THRESHOLD;
   char pon[MAX_PIXELS + 1];
   for (int i = 0; i < pixels_num && i < MAX_PIXELS; i++) pon[i] = pixel_on[i] ? '1' : '0';
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
-  char btm_esc[48]; strlcpy(btm_esc, boiler_melding, sizeof(btm_esc));  // idem tm_esc: geen quotes verwacht
+  char pixAan[MAX_PIXELS + 3];
+  snprintf(pixAan, sizeof(pixAan), "P=%s", pon);  // "P="-prefix: appendRow() in Sheets bewaart zo leidende nullen
+  char buf[420];
   snprintf(buf, sizeof(buf),
-    "{\"rid\":\"%s\",\"ver\":\"%s\",\"ip\":\"%s\",\"mdns\":\"%s\",\"rssi\":%d,"
-    "\"heap\":%u,\"lb\":%u,\"crash\":%u,\"upt\":%lu,\"ap\":%s,"
-    "\"t2\":%.1f,\"t2ok\":%s,\"h\":%.1f,\"dp\":%.1f,\"t1\":%.1f,\"dsok\":%s,\"dsc\":%d,\"rt\":%.1f,\"tm\":\"%s\",\"rtok\":%s,"
-    "\"ldr\":%d,\"mov\":%d,"
-    "\"hauto\":%s,\"hsp\":%d,\"heff\":%.1f,\"rman\":%s,\"hon\":%s,\"duty\":%.0f,\"hcv\":%.2f,"
-    "\"dsb\":%d,\"bt\":%.1f,\"btok\":%s,\"btm\":\"%s\",\"swauto\":%s,\"bsp\":%d,\"sw2man\":%s,\"swon\":%s,\"hsww\":%.2f,"
-    "\"dsl\":%s,"
-    "\"bed\":%s,\"p0m\":%d,\"p0on\":%s,\"pn\":%d,\"fd\":%d,\"lom\":%d,\"pon\":\"%s\",\"nr\":%d,\"ng\":%d,\"nb\":%d,"
-    "\"gas\":%s,\"gcode\":%d}",
-    room_id, SJALAY_VERSION,
-    ap_mode_active ? "192.168.4.1" : WiFi.localIP().toString().c_str(),
-    mdns_name,
-    ap_mode_active ? 0 : WiFi.RSSI(),
-    (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024),
-    (unsigned)getCrashCount(), upt,
-    ap_mode_active ? "true" : "false",
-    t2_j, t2_ok ? "true" : "false", h_j, dew, temp_ds, ds_ok ? "true" : "false", ds_count, room_temp, tm_esc, room_temp_reliable ? "true" : "false",
-    light_ldr, mov1_triggers,
-    heating_auto ? "true" : "false", heating_setpoint, effective_setpoint,
-    relay_manual ? "true" : "false", heating_on ? "true" : "false", getDutyPercent(), hyst_cv,
-    ds_boiler, temp_boiler, boiler_temp_reliable ? "true" : "false", btm_esc, sww_auto ? "true" : "false", boiler_setpoint, relay2_manual ? "true" : "false", sww_on ? "true" : "false", hyst_sww,
-    dsl,
-    bed ? "true" : "false", pixel0_mode, pixel0_manual_on ? "true" : "false", pixels_num, fade_duration, light_on_min, pon,
-    (int)neo_r, (int)neo_g, (int)neo_b,
-    strlen(gas_url) > 0 ? "true" : "false", sheets_last_code);
+    "{\"room\":\"%s\","
+    "\"a\":%lu,\"b\":%d,\"c\":%d,\"d\":%.1f,\"e\":%.1f,\"f\":%.1f,\"g\":%.1f,\"h\":%d,"
+    "\"i\":%d,\"j\":%d,\"k\":%.1f,"
+    "\"l\":%d,\"m\":%d,\"n\":%d,\"o\":%d,\"p\":%d,\"q\":%d,\"r\":\"%s\",\"s\":%d,\"t\":%d,"
+    "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d}",
+    room_id,
+    upt, heating_on ? 1 : 0, heating_setpoint, room_temp, t2_j, h_j, dew, dew_alert ? 1 : 0,
+    sww_on ? 1 : 0, boiler_setpoint, temp_boiler,
+    light_ldr, nacht ? 1 : 0, bed ? 1 : 0, (int)neo_r, (int)neo_g, (int)neo_b, pixAan, pixel0_mode, mov1_triggers,
+    ap_mode_active ? 0 : WiFi.RSSI(), (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024), ds_count);
   return String(buf);
 }
 
@@ -968,15 +817,16 @@ void loadConfigFromNVS() {
   { String t = preferences.getString("mdns_name", "sjalay"); strlcpy(mdns_name, t.c_str(), sizeof(mdns_name)); }
   heating_auto     = preferences.getBool("heat_auto", false);
   relay_manual     = preferences.getBool("relay_man", false);
-  heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 10, 30);
+  heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 5, 30);
   dew_margin       = preferences.getFloat("dew_margin", 2.0);
   hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
   LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dark", 40), 0, 100);
   { String t = preferences.getString("gas_url", ""); strlcpy(gas_url, t.c_str(), sizeof(gas_url)); }
+  sheets_interval_min = constrain(preferences.getInt("sheets_min", 5), 1, 60);
 
   sww_auto        = preferences.getBool("sww_auto", false);
   relay2_manual   = preferences.getBool("relay2_man", false);
-  boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), 40, 60);
+  boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), 10, 60);
   hyst_sww        = constrain(preferences.getFloat("hyst_sww", 5.0), 0.5f, 15.0f);
 }
 
@@ -1059,12 +909,13 @@ void handleLanding(AsyncWebServerRequest *request) {
     "font-size:26px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;}"
     ".p0btn.on{background:#1b7a43;border-color:#1b7a43;}"
     ".card{background:#fff;border-radius:16px;box-shadow:0 1px 3px rgba(0,0,0,.15);padding:18px;text-align:center;margin-bottom:16px;}"
-    ".card .ic{font-size:34px;}"
-    ".card .big{font-size:40px;font-weight:bold;margin:6px 0 14px;}"
+    ".icring{width:58px;height:58px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;"
+    "font-size:30px;background:#fff;border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:background .2s,border-color .2s;}"
+    ".icring.active{background:#ffe3e3;border-color:#e03131;}"
+    ".card .big{font-size:40px;font-weight:bold;margin:10px 0 14px;}"
     ".card .big .soll{font-size:20px;font-weight:normal;}"
-    ".card.heat .ic,.card.heat .big{color:#e05c00;}"
-    ".card.sww .ic,.card.sww .big{color:#0077cc;}"
-    ".dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#ccc;margin-left:8px;vertical-align:middle;}"
+    ".card.heat .big{color:#e05c00;}"
+    ".card.sww .big{color:#0077cc;}"
     "input[type=range]{width:90%;height:34px;}"
     ".gearwrap{text-align:center;margin:28px 0 10px;}"
     ".gearwrap a{font-size:26px;text-decoration:none;opacity:.5;}"
@@ -1107,38 +958,39 @@ void handleLanding(AsyncWebServerRequest *request) {
   // dauwpuntcorrectie) samen op één lijn, in de kaartkleur: groot IST eerst, dan kleiner
   // "(-> X°)" tussen haakjes met spatie ervoor - live bijgewerkt tijdens het schuiven en
   // nadien gesynchroniseerd met de echte effectieve setpoint via /json.
-  p->printf("<div class=\"card heat\"><div class=\"ic\">&#128293;"
-    "<span class=\"dot\" id=\"dot-heat\" style=\"background:%s\"></span></div>"
+  p->printf("<div class=\"card heat\"><div class=\"icring%s\" id=\"ic-heat\">&#128293;</div>"
     "<div class=\"big\"><span id=\"v-rt\">%s</span><span class=\"soll\" id=\"v-heff-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
-    "<input type=\"range\" id=\"sl-hsp\" min=\"10\" max=\"30\" value=\"%d\" "
+    "<input type=\"range\" id=\"sl-hsp\" min=\"5\" max=\"30\" value=\"%d\" "
     "oninput=\"document.getElementById('v-heff-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_setpoint',this.value)\"></form></div>",
-    heating_on ? "#e05c00" : "#ccc",
+    heating_on ? " active" : "",
     room_temp_reliable ? (String(room_temp, 1) + "&deg;").c_str() : "n.v.t.",
     heating_setpoint, heating_setpoint);
 
   // ---- SWW ----
   // Idem: groot IST (gemeten boilertemp), klein "(-> X°)" = SOLL (setpoint; voor SWW
   // momenteel gelijk aan de effectieve doeltemp, geen aparte correctie zoals bij verwarming).
-  p->printf("<div class=\"card sww\"><div class=\"ic\">&#128703;"
-    "<span class=\"dot\" id=\"dot-sww\" style=\"background:%s\"></span></div>"
+  p->printf("<div class=\"card sww\"><div class=\"icring%s\" id=\"ic-sww\">&#128703;</div>"
     "<div class=\"big\"><span id=\"v-bt\">%s</span><span class=\"soll\" id=\"v-bsp-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
-    "<input type=\"range\" id=\"sl-bsp\" min=\"40\" max=\"60\" value=\"%d\" "
+    "<input type=\"range\" id=\"sl-bsp\" min=\"10\" max=\"60\" value=\"%d\" "
     "oninput=\"document.getElementById('v-bsp-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_boiler_setpoint',this.value)\"></form></div>",
-    sww_on ? "#0077cc" : "#ccc",
+    sww_on ? " active" : "",
     boiler_temp_reliable ? (String(temp_boiler, 1) + "&deg;").c_str() : "n.v.t.",
     boiler_setpoint, boiler_setpoint);
 
   // ---- Geavanceerd (enkel icoon, geen tekst) ----
   p->print("<div class=\"gearwrap\"><a href=\"/advanced\">&#9881;&#65039;</a></div>");
 
-  p->print("<script>"
+  p->printf("<script>"
+    "var pixelsNum=%d;"
     "function toHex(v){return ('0'+Math.round(v).toString(16)).slice(-2);}"
     "var lastHex='#ffffff';"
-    "var bedOn=false;"
+    "var bedOn=false;",
+    pixels_num);
+  p->print(
     "function setVal(url,v){fetch(url+'?value='+v).then(refresh);}"
     "function toggleLight(i){if(i==0&&bedOn)return;fetch('/toggle_pixel?idx='+i).then(refresh);}"
     "function toggleBed(){fetch('/toggle_bed').then(refresh);}"
@@ -1149,27 +1001,28 @@ void handleLanding(AsyncWebServerRequest *request) {
       "fetch('/setcolor?r='+r+'&g='+g+'&b='+b).then(refresh);}"
     "function refresh(){"
       "fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{"
-        "lastHex='#'+toHex(data.nr)+toHex(data.ng)+toHex(data.nb);"
+        "lastHex='#'+toHex(data.o)+toHex(data.p)+toHex(data.q);"
         "if(document.activeElement.id!=='colorPicker')document.getElementById('colorPicker').value=lastHex;"
-        "bedOn=data.bed;"
+        "bedOn=!!data.n;"
         "var bb=document.getElementById('bedToggle');if(bb)bb.className='bedbtn'+(bedOn?' on':'');"
-        "var pb=document.getElementById('p0modeToggle');if(pb){pb.className='p0btn'+(data.p0m===1?' on':'');pb.innerHTML=(data.p0m===1?'&#9995;':'&#128260;');}"
-        "for(var i=0;i<data.pn;i++){"
+        "var pb=document.getElementById('p0modeToggle');if(pb){pb.className='p0btn'+(data.s===1?' on':'');pb.innerHTML=(data.s===1?'&#9995;':'&#128260;');}"
+        "var ponBits=(data.r||'P=').slice(2);"
+        "for(var i=0;i<pixelsNum;i++){"
           "var t=document.getElementById('lt-'+i);if(!t)continue;"
           "var locked=(i==0&&bedOn);"
-          "var on=!locked&&data.pon.charAt(i)==='1';"
+          "var on=!locked&&ponBits.charAt(i)==='1';"
           "t.className='ltile'+(on?' on':'')+(locked?' locked':'');"
           "t.style.background=on?lastHex:'#fff';"
           "if(i==0){var ic=t.querySelector('.ic');if(ic)ic.innerHTML=locked?'&#127769;':'&#128161;';}"
         "}"
-        "var vr=document.getElementById('v-rt');if(vr)vr.textContent=data.rtok?data.rt.toFixed(1)+'°':'n.v.t.';"
-        "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+data.heff.toFixed(1)+'°)';"
-        "var hs=document.getElementById('sl-hsp');if(hs&&document.activeElement.id!=='sl-hsp')hs.value=data.hsp;"
-        "var dh=document.getElementById('dot-heat');if(dh)dh.style.background=data.hon?'#e05c00':'#ccc';"
-        "var vb=document.getElementById('v-bt');if(vb)vb.textContent=data.btok?data.bt.toFixed(1)+'°':'n.v.t.';"
-        "var bt=document.getElementById('v-bsp-t');if(bt&&document.activeElement.id!=='sl-bsp')bt.textContent=' (→ '+data.bsp+'°)';"
-        "var bs=document.getElementById('sl-bsp');if(bs&&document.activeElement.id!=='sl-bsp')bs.value=data.bsp;"
-        "var ds=document.getElementById('dot-sww');if(ds)ds.style.background=data.swon?'#0077cc':'#ccc';"
+        "var vr=document.getElementById('v-rt');if(vr)vr.textContent=data.d.toFixed(1)+'°';"
+        "var ht=document.getElementById('v-heff-t');if(ht&&document.activeElement.id!=='sl-hsp')ht.textContent=' (→ '+data.c+'°)';"
+        "var hs=document.getElementById('sl-hsp');if(hs&&document.activeElement.id!=='sl-hsp')hs.value=data.c;"
+        "var ih=document.getElementById('ic-heat');if(ih)ih.className='icring'+(data.b?' active':'');"
+        "var vb=document.getElementById('v-bt');if(vb)vb.textContent=data.k.toFixed(1)+'°';"
+        "var bt=document.getElementById('v-bsp-t');if(bt&&document.activeElement.id!=='sl-bsp')bt.textContent=' (→ '+data.j+'°)';"
+        "var bs=document.getElementById('sl-bsp');if(bs&&document.activeElement.id!=='sl-bsp')bs.value=data.j;"
+        "var is=document.getElementById('ic-sww');if(is)is.className='icring'+(data.i?' active':'');"
       "}).catch(e=>console.error(e));}"
     "document.addEventListener('DOMContentLoaded',function(){refresh();setInterval(refresh,3000);});"
     "</script>");
@@ -1191,20 +1044,7 @@ void handleStatus(AsyncWebServerRequest *request) {
   writeSidebar(p, "status");
   p->print("<div class=\"main\">");
 
-  p->print("<div class=\"group-title\">Controller</div><table>");
-  p->printf("<tr><td class=\"label\">IP-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
-    ap_mode_active ? "192.168.4.1 (AP-modus)" : WiFi.localIP().toString().c_str());
-  p->printf("<tr><td class=\"label\">mDNS-naam</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
-    ap_mode_active ? "n.v.t. (AP-modus)" : (String("http://") + mdns_name + ".local/").c_str());
-  p->printf("<tr><td class=\"label\">Wi-Fi RSSI</td><td class=\"value\" id=\"v-rssi\" colspan=\"2\">%d dBm</td></tr>", ap_mode_active ? 0 : WiFi.RSSI());
-  p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>", mac_address);
-  p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
-  p->printf("<tr><td class=\"label\">Grootste blok</td><td class=\"value\" id=\"v-lb\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getMaxAllocHeap()/1024));
-  p->printf("<tr><td class=\"label\">Crash-teller</td><td class=\"value\" id=\"v-crash\" colspan=\"2\">%u</td></tr>", (unsigned)getCrashCount());
-  p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", SJALAY_VERSION);
-  p->print("</table>");
-
-  p->print("<div class=\"group-title\">Verwarming / relais (WOLF E1)</div><table>");
+  p->print("<div class=\"group-title\">Verwarming</div><table>");
   p->printf("<tr><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-hauto\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_heating_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-hauto\"%s onchange=\"submitAjax(this.form);\">"
@@ -1220,9 +1060,24 @@ void handleStatus(AsyncWebServerRequest *request) {
 
   p->printf("<tr><td class=\"label\">Setpoint</td><td class=\"value\" id=\"v-hsp\">%d &deg;C</td>"
     "<td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
-    "<input type=\"range\" class=\"slider\" id=\"sl-hsp\" name=\"value\" min=\"10\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
+    "<input type=\"range\" class=\"slider\" id=\"sl-hsp\" name=\"value\" min=\"5\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
     "</form></td></tr>", heating_setpoint, heating_setpoint);
-  p->printf("<tr><td class=\"label\">Effectieve setpoint</td><td class=\"value\" id=\"v-heff\" colspan=\"2\">%.1f &deg;C</td></tr>", effective_setpoint);
+  { char humTxt[16];
+    if (isnan(humi)) strlcpy(humTxt, "n.v.t.", sizeof(humTxt));
+    else snprintf(humTxt, sizeof(humTxt), "%.0f%%", humi);
+    p->printf("<tr><td class=\"label\">Effectieve setpoint met %% vochtigheid</td><td class=\"value\" id=\"v-heff\" colspan=\"2\">%.1f &deg;C (vocht %s)</td></tr>",
+      effective_setpoint, humTxt);
+  }
+  p->printf("<tr><td class=\"label\">DHT22 temp</td><td class=\"value\" id=\"v-t2\" colspan=\"2\">%s</td></tr>",
+    isnan(temp_dht) ? "defect (geen sensor?)" : (String(temp_dht, 1) + " &deg;C").c_str());
+  p->printf("<tr><td class=\"label\">DHT22 vocht</td><td class=\"value\" id=\"v-h\" colspan=\"2\">%s</td></tr>",
+    isnan(humi) ? "defect" : (String(humi, 1) + " %").c_str());
+  p->printf("<tr><td class=\"label\">Dauwpunt</td><td class=\"value\" id=\"v-dp\" colspan=\"2\">%.1f &deg;C</td></tr>", dew);
+  p->printf("<tr><td class=\"label\">Kamertemperatuur<br><span style=\"font-size:11px;color:#888;\">bron: <span id=\"v-rtsrc\">%s</span></span></td><td class=\"value\" id=\"v-rt\" colspan=\"2\">%s</td></tr>",
+    room_source, room_temp_reliable ? (String(room_temp, 1) + " &deg;C").c_str() : "n.v.t.");
+  { const char* tm_color = !room_temp_reliable ? "#c00" : (room_temp_fallback ? "#e67e22" : "#2a9d2a");
+    p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-tm\" colspan=\"2\" style=\"color:%s;\">%s</td></tr>", tm_color, temp_melding);
+  }
   p->printf("<tr><td class=\"label\">Ketelvraag</td><td class=\"value\" id=\"v-hon\" colspan=\"2\">"
     "<span class=\"dot\" style=\"background:%s\"></span> %s</td></tr>",
     heating_on ? "#e05c00" : "#bbb", heating_on ? "AAN" : "UIT");
@@ -1230,7 +1085,7 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hcv\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", hyst_cv);
   p->print("</table>");
 
-  p->print("<div class=\"group-title\">SWW / boilerwater (relais 2, laadpomp)</div><table>");
+  p->print("<div class=\"group-title\">SWW boiler</div><table>");
   p->printf("<tr><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-swauto\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_sww_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-swauto\"%s onchange=\"submitAjax(this.form);\">"
@@ -1244,7 +1099,7 @@ void handleStatus(AsyncWebServerRequest *request) {
     relay2_manual ? "AAN" : "UIT", relay2_manual ? " checked" : "");
   p->printf("<tr><td class=\"label\">Boiler-setpoint</td><td class=\"value\" id=\"v-bsp\">%d &deg;C</td>"
     "<td class=\"control\"><form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
-    "<input type=\"range\" class=\"slider\" id=\"sl-bsp\" name=\"value\" min=\"40\" max=\"60\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
+    "<input type=\"range\" class=\"slider\" id=\"sl-bsp\" name=\"value\" min=\"10\" max=\"60\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
     "</form></td></tr>", boiler_setpoint, boiler_setpoint);
   p->printf("<tr><td class=\"label\">Boilertemperatuur (%s)</td><td class=\"value\" id=\"v-bt\" colspan=\"2\">%s</td></tr>",
     ds_boiler >= 0 ? ds_nicknames[ds_boiler] : "geen sensor", boiler_temp_reliable ? (String(temp_boiler, 1) + " &deg;C").c_str() : "n.v.t.");
@@ -1255,21 +1110,9 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-btm\" colspan=\"2\" style=\"color:#e67e22;\">%s</td></tr>", boiler_melding);
   p->print("</table>");
 
-  p->print("<div class=\"group-title\">HVAC (sensoren)</div><table>");
-  p->printf("<tr><td class=\"label\">DHT22 temp</td><td class=\"value\" id=\"v-t2\" colspan=\"2\">%s</td></tr>",
-    isnan(temp_dht) ? "defect (geen sensor?)" : (String(temp_dht, 1) + " &deg;C").c_str());
-  p->printf("<tr><td class=\"label\">DHT22 vocht</td><td class=\"value\" id=\"v-h\" colspan=\"2\">%s</td></tr>",
-    isnan(humi) ? "defect" : (String(humi, 1) + " %").c_str());
-  p->printf("<tr><td class=\"label\">Dauwpunt</td><td class=\"value\" id=\"v-dp\" colspan=\"2\">%.1f &deg;C</td></tr>", dew);
+  p->print("<div class=\"group-title\">Alle DS18B20-sensoren</div><table id=\"ds-all-table\">");
   p->printf("<tr><td class=\"label\">DS18B20 gevonden</td><td class=\"value\" id=\"v-dsc\" colspan=\"2\">%d %s</td></tr>",
     ds_count, ds_count == 0 ? "(RoomSense niet aangesloten?)" : "");
-  p->printf("<tr><td class=\"label\">DS18B20 primair (%s)</td><td class=\"value\" id=\"v-t1\" colspan=\"2\">%s</td></tr>",
-    ds_count > 0 ? ds_nicknames[ds_primary] : "-", ds_count > 0 ? (String(temp_ds, 1) + " &deg;C").c_str() : "n.v.t.");
-  p->printf("<tr><td class=\"label\">Room temp (gebruikt)</td><td class=\"value\" id=\"v-rt\" colspan=\"2\">%.1f &deg;C</td></tr>", room_temp);
-  p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-tm\" colspan=\"2\" style=\"color:#e67e22;\">%s</td></tr>", temp_melding);
-  p->print("</table>");
-
-  p->print("<div class=\"group-title\">Alle DS18B20-sensoren</div><table id=\"ds-all-table\">");
   if (ds_count == 0) {
     p->print("<tr><td class=\"label\" colspan=\"3\">Geen sensoren gevonden</td></tr>");
   }
@@ -1280,18 +1123,15 @@ void handleStatus(AsyncWebServerRequest *request) {
   }
   p->print("</table>");
 
+  char hexcol[8]; snprintf(hexcol, sizeof(hexcol), "#%02x%02x%02x", neo_r, neo_g, neo_b);
   p->print("<div class=\"group-title\">Verlichting</div><table>");
-  p->printf("<tr><td class=\"label\">LDR1 (donker=100)</td><td class=\"value\" id=\"v-ldr\" colspan=\"2\">%d</td></tr>", light_ldr);
+  p->printf("<tr><td class=\"label\">OMGEVINGSLICHT (donker=100)</td><td class=\"value\" id=\"v-ldr\" colspan=\"2\">%d</td></tr>", light_ldr);
   p->printf("<tr><td class=\"label\">Bed-modus<br><span style=\"font-size:11px;color:#888;\">dwingt pixel 0 uit</span></td>"
     "<td class=\"value\" id=\"v-bed\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_bed\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-bed\"%s onchange=\"submitAjax(this.form);\">"
     "<span class=\"slider-switch\"></span></label></form></td></tr>",
     bed ? "AAN" : "UIT", bed ? " checked" : "");
-  p->print("</table>");
-
-  char hexcol[8]; snprintf(hexcol, sizeof(hexcol), "#%02x%02x%02x", neo_r, neo_g, neo_b);
-  p->print("<div class=\"group-title\">Powerpixels</div><table>");
   p->printf("<tr><td class=\"label\">Kleur</td><td class=\"value\" id=\"rgb_val\">%d, %d, %d</td>"
     "<td class=\"control\"><input type=\"color\" id=\"colorPicker\" value=\"%s\" onchange=\"setNeoColor(this.value);\" "
     "style=\"width:48px;height:34px;border:none;cursor:pointer;padding:2px;\"></td></tr>",
@@ -1346,14 +1186,30 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->print("</table>");
 
   p->print("<div class=\"group-title\">Beweging</div><table>");
-  p->printf("<tr><td class=\"label\">PIR MOV1 trig/min</td><td class=\"value\" id=\"v-mov\" colspan=\"2\">%d</td></tr>", mov1_triggers);
+  p->printf("<tr><td class=\"label\" id=\"v-movlbl\">PIR MOV1 trig/%d min</td><td class=\"value\" id=\"v-mov\" colspan=\"2\">%d</td></tr>", sheets_interval_min, mov1_triggers);
   p->print("</table>");
 
   p->print("<div class=\"group-title\">Logging</div><table>");
-  p->printf("<tr><td class=\"label\">Google Sheets</td><td class=\"value\" id=\"v-gas\" colspan=\"2\">%s</td></tr>",
-    strlen(gas_url) == 0 ? "UIT (geen URL ingesteld)" : "AAN (elke 5 min)");
+  { char gasTxt[32];
+    if (strlen(gas_url) == 0) strlcpy(gasTxt, "UIT (geen URL ingesteld)", sizeof(gasTxt));
+    else snprintf(gasTxt, sizeof(gasTxt), "AAN (elke %d min)", sheets_interval_min);
+    p->printf("<tr><td class=\"label\">Google Sheets</td><td class=\"value\" id=\"v-gas\" colspan=\"2\">%s</td></tr>", gasTxt);
+  }
   p->printf("<tr><td class=\"label\">Laatste resultaat</td><td class=\"value\" id=\"v-gcode\" colspan=\"2\">%s</td></tr>",
     sheets_last_post == 0 ? "nog niet geprobeerd" : (sheets_last_code == 200 ? "HTTP 200 (OK)" : String("HTTP " + String(sheets_last_code)).c_str()));
+  p->print("</table>");
+
+  p->print("<div class=\"group-title\">Controller</div><table>");
+  p->printf("<tr><td class=\"label\">IP-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
+    ap_mode_active ? "192.168.4.1 (AP-modus)" : WiFi.localIP().toString().c_str());
+  p->printf("<tr><td class=\"label\">mDNS-naam</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
+    ap_mode_active ? "n.v.t. (AP-modus)" : (String("http://") + mdns_name + ".local/").c_str());
+  p->printf("<tr><td class=\"label\">Wi-Fi RSSI</td><td class=\"value\" id=\"v-rssi\" colspan=\"2\">%d dBm</td></tr>", ap_mode_active ? 0 : WiFi.RSSI());
+  p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>", mac_address);
+  p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
+  p->printf("<tr><td class=\"label\">Grootste blok</td><td class=\"value\" id=\"v-lb\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getMaxAllocHeap()/1024));
+  p->printf("<tr><td class=\"label\">Crash-teller</td><td class=\"value\" id=\"v-crash\" colspan=\"2\">%u</td></tr>", (unsigned)getCrashCount());
+  p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", SJALAY_VERSION);
   p->print("</table>");
 
   // ============== LIVE-REFRESH SCRIPT (loopt in browser, geen ESP32-heap-impact) ==============
@@ -1374,62 +1230,42 @@ void handleStatus(AsyncWebServerRequest *request) {
       "el.innerHTML='uptime '+window.lastUptime+' s &nbsp;|&nbsp; '+n.toLocaleDateString('nl-BE')+' '+n.toLocaleTimeString('nl-BE')+' <span id=\"status\">'+st+'</span>';}"
     "function updateValues(){"
       "fetch('/json?'+Date.now(),{cache:'no-store'}).then(r=>r.json()).then(data=>{"
-        "window.lastUptime=data.upt;"
-        "lastHex='#'+toHex(data.nr)+toHex(data.ng)+toHex(data.nb);"
+        "window.lastUptime=data.a;"
+        "lastHex='#'+toHex(data.o)+toHex(data.p)+toHex(data.q);"
         "var g=id=>document.getElementById(id);"
-        "if(g('v-rssi'))g('v-rssi').textContent=data.rssi+' dBm';"
-        "if(g('v-heap'))g('v-heap').textContent=data.heap+' KB';"
-        "if(g('v-lb'))g('v-lb').textContent=data.lb+' KB';"
-        "if(g('v-crash'))g('v-crash').textContent=data.crash;"
-        "if(g('v-t2'))g('v-t2').innerHTML=data.t2ok?data.t2.toFixed(1)+' &deg;C':'defect (geen sensor?)';"
-        "if(g('v-h'))g('v-h').innerHTML=data.t2ok?data.h.toFixed(1)+' %':'defect';"
-        "if(g('v-dp'))g('v-dp').innerHTML=data.dp.toFixed(1)+' &deg;C';"
-        "if(g('v-dsc'))g('v-dsc').textContent=data.dsc+(data.dsc===0?' (RoomSense niet aangesloten?)':'');"
-        "if(g('v-t1'))g('v-t1').innerHTML=data.dsok?data.t1.toFixed(1)+' &deg;C':'n.v.t.';"
-        "if(g('v-rt'))g('v-rt').innerHTML=data.rt.toFixed(1)+' &deg;C';"
-        "if(g('v-tm'))g('v-tm').textContent=data.tm;"
-        "if(g('v-hcv'))g('v-hcv').textContent='±'+data.hcv.toFixed(1)+' °C';"
-        "if(g('v-hsww'))g('v-hsww').textContent='±'+data.hsww.toFixed(1)+' °C';"
-        "if(g('cb-swauto'))g('cb-swauto').checked=data.swauto;"
-        "if(g('v-swauto'))g('v-swauto').textContent=data.swauto?'AAN':'UIT';"
-        "if(g('cb-sw2man'))g('cb-sw2man').checked=data.sw2man;"
-        "if(g('v-sw2man'))g('v-sw2man').textContent=data.sw2man?'AAN':'UIT';"
-        "if(g('v-bsp'))g('v-bsp').textContent=data.bsp+' °C';"
-        "if(g('sl-bsp')&&document.activeElement.id!=='sl-bsp')g('sl-bsp').value=data.bsp;"
-        "if(g('v-bt'))g('v-bt').innerHTML=data.btok?data.bt.toFixed(1)+' &deg;C':'n.v.t.';"
-        "if(g('v-swon'))g('v-swon').innerHTML=dot(data.swon,'#0077cc')+' '+(data.swon?'AAN':'UIT');"
-        "if(g('v-btm'))g('v-btm').textContent=data.btm;"
-        "data.dsl.forEach(function(s,i){var e=g('v-dsall-'+i);if(e)e.innerHTML=s.t.toFixed(1)+' °C'+(s.ok?'':' &mdash; ontbreekt');});"
-        "if(g('v-ldr'))g('v-ldr').textContent=data.ldr;"
-        "if(g('v-mov'))g('v-mov').textContent=data.mov;"
-        "if(g('v-gas'))g('v-gas').textContent=data.gas?'AAN (elke 5 min)':'UIT (geen URL ingesteld)';"
-        "if(g('v-gcode'))g('v-gcode').textContent=data.gcode===0?'nog niet geprobeerd':('HTTP '+data.gcode+(data.gcode===200?' (OK)':''));"
-        "if(g('v-hsp'))g('v-hsp').textContent=data.hsp+' \u00b0C';"
-        "if(g('sl-hsp')&&document.activeElement.id!=='sl-hsp')g('sl-hsp').value=data.hsp;"
-        "if(g('v-heff'))g('v-heff').innerHTML=data.heff.toFixed(1)+' &deg;C';"
-        "if(g('v-hon'))g('v-hon').innerHTML=dot(data.hon,'#e05c00')+' '+(data.hon?'AAN':'UIT');"
-        "if(g('v-duty'))g('v-duty').textContent=data.duty.toFixed(0)+' %';"
-        "if(g('v-fd'))g('v-fd').textContent=data.fd+' s';"
-        "if(g('v-lom'))g('v-lom').textContent=data.lom+' min';"
-        "if(g('cb-hauto'))g('cb-hauto').checked=data.hauto;"
-        "if(g('v-hauto'))g('v-hauto').textContent=data.hauto?'AAN':'UIT';"
-        "if(g('cb-rman'))g('cb-rman').checked=data.rman;"
-        "if(g('v-rman'))g('v-rman').textContent=data.rman?'AAN':'UIT';"
-        "if(g('cb-bed'))g('cb-bed').checked=data.bed;"
-        "if(g('v-bed'))g('v-bed').textContent=data.bed?'AAN':'UIT';"
-        "if(g('cb-p0m'))g('cb-p0m').checked=(data.p0m===1);"
-        "if(g('v-p0m'))g('v-p0m').textContent=(data.p0m===1)?'MANUEEL':'AUTO';"
-        "if(g('row-p0bed'))g('row-p0bed').style.display=data.bed?'':'none';"
-        "if(g('row-p0on'))g('row-p0on').style.display=(!data.bed&&data.p0m===1)?'':'none';"
-        "if(g('row-p0auto'))g('row-p0auto').style.display=(!data.bed&&data.p0m===0)?'':'none';"
-        "if(g('rgb_val'))g('rgb_val').textContent=data.nr+', '+data.ng+', '+data.nb;"
+        "if(g('v-rssi'))g('v-rssi').textContent=data.u+' dBm';"
+        "if(g('v-heap'))g('v-heap').textContent=data.v+' KB';"
+        "if(g('v-lb'))g('v-lb').textContent=data.w+' KB';"
+        "if(g('v-t2'))g('v-t2').innerHTML=data.e.toFixed(1)+' &deg;C';"
+        "if(g('v-h'))g('v-h').innerHTML=data.f.toFixed(1)+' %';"
+        "if(g('v-dp'))g('v-dp').innerHTML=data.g.toFixed(1)+' &deg;C';"
+        "if(g('v-dsc'))g('v-dsc').textContent=data.x+(data.x===0?' (RoomSense niet aangesloten?)':'');"
+        "if(g('v-rt'))g('v-rt').innerHTML=data.d.toFixed(1)+' &deg;C';"
+        "if(g('v-bsp'))g('v-bsp').textContent=data.j+' \u00b0C';"
+        "if(g('sl-bsp')&&document.activeElement.id!=='sl-bsp')g('sl-bsp').value=data.j;"
+        "if(g('v-bt'))g('v-bt').innerHTML=data.k.toFixed(1)+' &deg;C';"
+        "if(g('v-swon'))g('v-swon').innerHTML=dot(data.i,'#0077cc')+' '+(data.i?'AAN':'UIT');"
+        "if(g('v-ldr'))g('v-ldr').textContent=data.l;"
+        "if(g('v-mov'))g('v-mov').textContent=data.t;"
+        "if(g('v-hsp'))g('v-hsp').textContent=data.c+' \u00b0C';"
+        "if(g('sl-hsp')&&document.activeElement.id!=='sl-hsp')g('sl-hsp').value=data.c;"
+        "if(g('v-hon'))g('v-hon').innerHTML=dot(data.b,'#e05c00')+' '+(data.b?'AAN':'UIT');"
+        "if(g('cb-bed'))g('cb-bed').checked=!!data.n;"
+        "if(g('v-bed'))g('v-bed').textContent=data.n?'AAN':'UIT';"
+        "if(g('cb-p0m'))g('cb-p0m').checked=(data.s===1);"
+        "if(g('v-p0m'))g('v-p0m').textContent=(data.s===1)?'MANUEEL':'AUTO';"
+        "if(g('row-p0bed'))g('row-p0bed').style.display=data.n?'':'none';"
+        "if(g('row-p0on'))g('row-p0on').style.display=(!data.n&&data.s===1)?'':'none';"
+        "if(g('row-p0auto'))g('row-p0auto').style.display=(!data.n&&data.s===0)?'':'none';"
+        "if(g('rgb_val'))g('rgb_val').textContent=data.o+', '+data.p+', '+data.q;"
         "if(g('colorPicker')&&document.activeElement.id!=='colorPicker')g('colorPicker').value=lastHex;"
+        "var ponBits=(data.r||'P=').slice(2);"
         "document.querySelectorAll('.cb-pix').forEach(cb=>{"
           "var i=parseInt(cb.getAttribute('data-idx'));"
-          "cb.checked=(data.pon.charAt(i)==='1');});"
+          "cb.checked=(ponBits.charAt(i)==='1');});"
         "document.querySelectorAll('.pixdot').forEach(sp=>{"
           "var i=parseInt(sp.getAttribute('data-idx'));"
-          "sp.style.background=(data.pon.charAt(i)==='1')?lastHex:'#bbb';});"
+          "sp.style.background=(ponBits.charAt(i)==='1')?lastHex:'#bbb';});"
       "}).catch(e=>console.error(e));}"
     "function submitAjax(form){"
       "const p=new URLSearchParams();"
@@ -1474,6 +1310,8 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Aantal pixels (1-30, herstart nodig)</td><td class=\"control\"><input type=\"number\" name=\"pnum\" min=\"1\" max=\"30\" value=\"%d\" style=\"width:60px;\"></td></tr>", pixels_num);
   p->printf("<tr><td class=\"label\">Google Script URL<br><span style=\"font-size:11px;color:#888;\">leeg = logging uit</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"gas\" value=\"%s\" maxlength=\"199\" style=\"width:95%%;\"></td></tr>", gas_url);
+  p->printf("<tr><td class=\"label\">Sheets-interval<br><span style=\"font-size:11px;color:#888;\">ook PIR-telvenster (trig/X min)</span></td>"
+    "<td class=\"control\"><input type=\"number\" name=\"sheetsint\" min=\"1\" max=\"60\" value=\"%d\" style=\"width:60px;\"> min</td></tr>", sheets_interval_min);
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\">%s</td></tr>", mac_address);
   p->print("</table>");
 
@@ -1508,10 +1346,10 @@ void handleSettings(AsyncWebServerRequest *request) {
     p->print("</select></td></tr>");
   }
   p->print("</table>"
-    "<button type=\"submit\">Opslaan &amp; herstart</button>"
-    "</form>"
     "<a class=\"btn\" href=\"/rescan_ds\">Herscan DS18B20-bus</a>"
-    "<p style=\"font-size:12px;color:#777;\">Herscan navigeert direct weg — sla eerst eventuele wijzigingen hierboven op.</p>");
+    "<p style=\"font-size:12px;color:#777;\">Herscan navigeert direct weg — sla eerst eventuele wijzigingen hierboven op.</p>"
+    "<button type=\"submit\">Opslaan &amp; herstart</button>"
+    "</form>");
 
   p->print("<div class=\"group-title\">Crash-log</div><table>");
   p->printf("<tr><td class=\"label\">Aantal geregistreerd</td><td class=\"value\">%u</td></tr>", (unsigned)getCrashCount());
@@ -1569,6 +1407,10 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     String v = request->getParam("gas")->value();
     strlcpy(gas_url, v.c_str(), sizeof(gas_url));
     preferences.putString("gas_url", v);
+  }
+  if (request->hasParam("sheetsint")) {
+    sheets_interval_min = constrain(request->getParam("sheetsint")->value().toInt(), 1, 60);
+    preferences.putInt("sheets_min", sheets_interval_min);
   }
   if (request->hasParam("pnum")) {
     int newnum = constrain(request->getParam("pnum")->value().toInt(), 1, MAX_PIXELS);
@@ -1651,7 +1493,7 @@ void handleToggleRelayManual(AsyncWebServerRequest *request) {
 
 void handleSetSetpoint(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
-    heating_setpoint = constrain(request->getParam("value")->value().toInt(), 10, 30);
+    heating_setpoint = constrain(request->getParam("value")->value().toInt(), 5, 30);
     preferences.begin("sjalay-cfg", false);
     preferences.putInt("heat_sp", heating_setpoint);
     preferences.end();
@@ -1680,7 +1522,7 @@ void handleToggleRelay2Manual(AsyncWebServerRequest *request) {
 
 void handleSetBoilerSetpoint(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
-    boiler_setpoint = constrain(request->getParam("value")->value().toInt(), 40, 60);
+    boiler_setpoint = constrain(request->getParam("value")->value().toInt(), 10, 60);
     preferences.begin("sjalay-cfg", false);
     preferences.putInt("boiler_sp", boiler_setpoint);
     preferences.end();
@@ -2078,7 +1920,7 @@ void loop() {
   }
 
   // Google Sheets: elke 5 min (HTTPS POST blokkeert kort, ~0.5-2s — aanvaardbaar op deze cadans)
-  if (!ap_mode_active && millis() - sheets_last_post > 300000UL) {
+  if (!ap_mode_active && millis() - sheets_last_post > sheetsIntervalMs()) {
     postToGoogleSheets();
   }
 }
