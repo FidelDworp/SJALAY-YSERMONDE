@@ -281,22 +281,22 @@ Beide relais zijn fail-safe-laag (`RELAY_ACTIVE_LOW`) en staan vóór Wi-Fi-verb
 
 ---
 
-## 5. De Sjalay-sketch — huidige implementatie (v0.16, 30 sep 2026)
+## 5. De Sjalay-sketch — huidige implementatie (v1.2, 1 okt 2026)
 
-Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.16.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 0.16) de bron van waarheid; dit is een leeswijzer erbij.
+Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v1.0.ino`, intern versienummer `SJALAY_VERSION` bijgewerkt naar 1.2 — bestandsnaam zelf is historisch, niet elke versie hernoemt het bestand) de bron van waarheid; dit is een leeswijzer erbij. **Vanaf v1.0 staat de volledige versiegeschiedenis (v0.1-v0.16) en de bouwstappen-checklist niet meer in de sketch-header zelf — enkel hier in §5.9 en §1.5/1.6.**
 
-**Getest op het thuisnetwerk (30/09) ✅** — controller naar fabrieksinstellingen gereset en op het Zarlardinge-netwerk gezet, met een volledige RoomSense-shield via RJ45-kabel. Bevestigd werkend: PIR-beweging in AUTO-modus schakelt pixel 0 aan, en de nieuwe AUTO/MANUEEL-knop (v0.16, zie 5.11) werkt zoals bedoeld.
+**Getest op het thuisnetwerk (30/09) ✅** — controller naar fabrieksinstellingen gereset en op het Zarlardinge-netwerk gezet, met een volledige RoomSense-shield via RJ45-kabel. Bevestigd werkend: PIR-beweging in AUTO-modus schakelt pixel 0 aan, en de AUTO/MANUEEL-knop (v0.16, zie 5.11) werkt zoals bedoeld. *(v1.0/v1.1/v1.2 zelf nog niet apart op het thuisnetwerk getest — zie §7.)*
 
 ### 5.1 Bestand en board-instellingen
 
 - Arduino IDE: **Board** = ESP32C6 Dev Module, **Flash Size** = 16MB, **Partition Scheme** = Custom (`partitions.csv`), **USB CDC On Boot** = Enabled
 - `#define Serial Serial0` bovenaan — verplicht op de C6
-- Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep op `/advanced`) en `/json` (`ver`)
+- Versienummer in `#define SJALAY_VERSION`, zichtbaar in UI (Controller-groep op `/advanced`, sinds v1.0 onderaan de pagina). Sinds v1.2 **niet meer** in `/json` (zie 5.6/6).
 - Nieuw sinds v0.14: `#include <ESPmDNS.h>` (standaard onderdeel van de ESP32-Arduino-core, geen extra library-installatie nodig)
 
 ### 5.2 Webinterface — pagina's en endpoints
 
-**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13/v0.15/v0.16** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data). Sinds v0.14 zijn `/` en `/advanced` ook bereikbaar via `http://<mdns-naam>.local/` (zie 5.12), naast het gewone IP-adres.
+**Pagina's:** `/` (eenvoudige landingspagina voor gasten/huurders, **nieuw in v0.12, bijgeschaafd in v0.13/v0.15/v0.16** — zie 5.11), `/advanced` (technische Status-pagina, **v0.12: was voorheen `/`**, sectie-indeling herschikt in v1.0/v1.1 — zie 5.13), `/update` (OTA), `/settings` (Settings), `/json` (ruwe data, compact schema sinds v1.2 — zie 6). Sinds v0.14 zijn `/` en `/advanced` ook bereikbaar via `http://<mdns-naam>.local/` (zie 5.12), naast het gewone IP-adres.
 
 | Endpoint | Werking |
 |---|---|
@@ -306,10 +306,10 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.16.ino`, intern versi
 | `/rescan_ds` | herscant DS18B20-bus |
 | `/toggle_heating_auto` | wisselt Automatisch/Handmatig voor verwarming (relais 1) |
 | `/toggle_relay_manual` | wisselt relais-1-stand (handmatige modus) |
-| `/set_setpoint?value=` | verwarmings-setpoint-slider (10-30 °C) — ook gebruikt door de landingspagina |
+| `/set_setpoint?value=` | verwarmings-setpoint-slider (**5-30 °C, minimum verlaagd in v1.1, was 10 °C**) — ook gebruikt door de landingspagina |
 | `/toggle_sww_auto` | wisselt Automatisch/Handmatig voor SWW (relais 2) |
 | `/toggle_relay2_manual` | wisselt relais-2-stand (handmatige modus) |
-| `/set_boiler_setpoint?value=` | boiler-setpoint-slider (40-60 °C) — ook gebruikt door de landingspagina |
+| `/set_boiler_setpoint?value=` | boiler-setpoint-slider (**10-60 °C, bereik verruimd in v1.0, was 40-60 °C**) — ook gebruikt door de landingspagina |
 | `/toggle_pixel_mode` | pixel 0: AUTO ↔ MANUEEL — **sinds v0.16 ook rechtstreeks bereikbaar vanop de landingspagina** (voorheen enkel op `/advanced`) |
 | `/toggle_pixel?idx=` | pixel `idx` aan/uit — **v0.12:** `idx=0` schakelt impliciet naar MANUEEL als hij nog in AUTO stond (relevant voor de landingspagina; geen gedragswijziging op `/advanced`) |
 | `/setcolor?r=&g=&b=` | powerpixel-kleur — ook gebruikt door de landingspagina |
@@ -321,10 +321,10 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.16.ino`, intern versi
 
 ### 5.3 Settings-velden
 
-- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), **mDNS-naam (nieuw in v0.14, zie 5.12)**, dauwpuntmarge, hysterese verwarming, hysterese SWW, LDR donker-drempel, aantal pixels, Google Script-URL, MAC (read-only)
+- **Algemeen:** room-naam, Wi-Fi SSID/wachtwoord, static IP (leeg = DHCP), **mDNS-naam (nieuw in v0.14, zie 5.12)**, dauwpuntmarge, hysterese verwarming, hysterese SWW, LDR donker-drempel, aantal pixels, Google Script-URL, **Sheets-interval (nieuw in v1.0, 1-60 min, default 5 min — stuurt ook het PIR-telvenster mee, zie 5.6)**, MAC (read-only)
 - **Pixel-namen:** naam + optioneel Shelly-koppeling (`ip:nickname,ip:nickname`, max 3) per pixel
 - **Sensoren (DS18B20):** nickname per sensor, keuze **primaire sensor (kamer)**, keuze **boilersensor (apart, optie "geen")**
-- Los: herscan DS18B20-bus, crash-log wissen, factory reset
+- Los: **herscan DS18B20-bus, opslaan & herstart** (volgorde omgewisseld in v1.1 — herscan staat nu eerst), crash-log wissen, factory reset
 
 ### 5.4 Verwarmingslogica (relais 1) — echte hysterese + veiligheidslagen
 
@@ -334,7 +334,7 @@ Bij twijfel is de code in de sketch (`SJALAY_CONTROLLER_v0.16.ino`, intern versi
   1. Geforceerd UIT zodra `room_temp` de bovengrens van de setpoint-slider bereikt (**30°C**)
   2. Geforceerd UIT bij onbetrouwbare temperatuurdata (kamer-DS én DHT22 beide defect/ontbrekend)
 - Relais wordt **onmiddellijk** aangepast bij elke wijziging
-- **Duty-cyclus:** 4-uur sliding window (12 × 20 min), zichtbaar in UI en `/json`/Sheets
+- **Duty-cyclus:** 4-uur sliding window (12 × 20 min), zichtbaar op `/advanced` (niet meer in `/json` sinds v1.2, zie 6)
 
 ### 5.5 Powerpixels — pixel 0 en bed-modus
 
@@ -346,7 +346,9 @@ Pixels 1+ zijn altijd rechtstreeks manueel, persistent, zonder bed-override.
 
 ### 5.6 Google Sheets-logging
 
-Actief zodra `gas_url` ingevuld is. Elke 5 minuten HTTPS POST van de volledige `/json`-payload. Laatste resultaatcode (`gcode`) zichtbaar in UI.
+Actief zodra `gas_url` ingevuld is. HTTPS POST van de `/json`-payload; de interval is **sinds v1.0 instelbaar in Settings** (§5.3, "Sheets-interval", 1-60 min, default 5 min — was voordien vast op 5 minuten). Het **PIR-telvenster** volgt sinds v1.0 automatisch diezelfde interval, zodat het telvenster altijd overeenkomt met de logging-frequentie.
+
+**Sinds v1.2** is het `/json`-schema zelf volledig herwerkt naar een **compact schema met positionele sleutels** (`a`, `b`, `c`, ... + `room`), in dezelfde stijl als het Zarlar-roomproject, i.p.v. de lange beschrijvende sleutels van v1.0/v1.1 — zie hoofdstuk 6 voor het volledige schema. **Dit vraagt een nieuw Google Apps Script** (`SJALAY_SHEETS_LOGGER.gs`, zie 6.1) — het vorige script (lange sleutelnamen) leest de nieuwe payload niet correct uit.
 
 ### 5.7 Shelly-stopcontacten per pixel
 
@@ -374,6 +376,7 @@ Meest kansrijk om ooit toe te voegen: **Shelly Flood** (waterlek-detectie in een
 - Zonder RoomSense-shield: sketch crasht niet, sensoren tonen gewoon NaN/0 met melding
 - Shelly-koppeling los te testen zonder sensoren (serial toont `[Shelly] ... -> HTTP ...`)
 - mDNS (`.local`) werkt enkel op apparaten/netwerken die het ondersteunen — vrijwel altijd het geval (macOS/iOS ingebouwd via Bonjour, Android en Windows meestal ook), maar als `sjalay.local` ooit niet oplost is het kale IP-adres (Status-pagina) altijd de garantie die werkt
+- Sinds v1.2 zijn sommige waarden op `/advanced` (crash-teller, heap, hysterese, Auto/Handmatig-status, Sheets-interval-tekst, duty-cyclus, per-sensor-detail van niet-toegewezen DS18B20's) enkel nog correct **bij het laden van de pagina** — ze volgen niet langer mee met de live-refresh om 3s, omdat ze niet meer in het compacte `/json`-schema zitten (zie 6). Een herlaad van de pagina toont steeds de actuele waarde.
 
 ### 5.9 Versiegeschiedenis (kort)
 
@@ -394,7 +397,10 @@ Meest kansrijk om ooit toe te voegen: **Shelly Flood** (waterlek-detectie in een
 | v0.13 | Landingspagina bijgeschaafd na feedback: IST (huidige gemeten temp) en SOLL (effectieve/gevraagde doeltemp) samen op één lijn i.p.v. twee regels — groot IST in de kaartkleur (oranje/blauw), SOLL kleiner tussen haakjes met een spatie ervoor, bv. "21.3° (→ 21°)"; overbodige sectie-iconen boven de verwarmings-/SWW-kaart en het lampje-icoon boven de lichten-tegels verwijderd (dubbelop met de kaart-/tegel-iconen zelf) |
 | v0.14 | mDNS/Bonjour toegevoegd (`<ESPmDNS.h>`) — de controller is voortaan ook bereikbaar via `http://<naam>.local/` i.p.v. enkel het kale IP-adres. Naam instelbaar in Settings (nieuw veld "mDNS-naam", default "sjalay"), enkel a-z/0-9/streepjes toegelaten (ongeldige invoer wordt automatisch opgeschoond, terugval "sjalay" bij een lege/volledig ongeldige naam). Start na een geslaagde Wi-Fi-verbinding (niet in AP-setup-modus); een nieuwe naam vereist een herstart, net als de andere Settings-velden. Zichtbaar op `/advanced` (naast IP-adres) en in `/json` ("mdns") |
 | v0.15 | Bed-modus/nachtmodus toegevoegd aan de landingspagina: nieuwe ronde knop (🛏️), even groot als de kleurkiezer (52px) en er links naast geplaatst. Voorkomt dat pixel 0 (beweging/schemer) 's nachts automatisch aangaat. Hergebruikt volledig de bestaande bed-variabele/NVS-veld en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9) — geen nieuwe backend-logica. Pixel 0 wordt tijdens bed-modus getoond als vergrendelde tegel (maan-icoon, gedimd, geen tik-actie); de bed-knop licht op zolang bed-modus actief is. Sync via het bestaande `/json`-veld `"bed"` |
-| **v0.16** | **Nieuwe ronde knop op de landingspagina om Pixel 0 (MOV1) ook terug naar AUTO te kunnen zetten — voorheen kon je op `/` enkel (impliciet, door de tegel aan te raken) naar MANUEEL schakelen, zonder weg terug. Zelfde vorm/grootte als de bed-knop (52px), er onmiddellijk naast geplaatst. Icoon: 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen). Hergebruikt volledig het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2) en het `/json`-veld `"p0m"` — geen nieuwe backend-logica. Getest op het thuisnetwerk (30/09) en bevestigd werkend** |
+| v0.16 | Nieuwe ronde knop op de landingspagina om Pixel 0 (MOV1) ook terug naar AUTO te kunnen zetten — voorheen kon je op `/` enkel (impliciet, door de tegel aan te raken) naar MANUEEL schakelen, zonder weg terug. Zelfde vorm/grootte als de bed-knop (52px), er onmiddellijk naast geplaatst. Icoon: 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen). Hergebruikt volledig het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2) en het `/json`-veld `"p0m"` — geen nieuwe backend-logica. Getest op het thuisnetwerk (30/09) en bevestigd werkend |
+| v1.0 | Eerste opgeruimde release. Volledige versiegeschiedenis (v0.1-v0.16, deze tabel) en de bouwstappen-checklist uit de sketch-header verwijderd — voortaan enkel hier in de README. Statuspagina (`/advanced`) herschikt (zie 5.13): Controller-sectie verhuisd naar helemaal onderaan; "SWW / boilerwater" hernoemd naar "SWW boiler", setpoint-bereik 10-60°C (was 40-60°C, ook op de landingspagina); sectie "HVAC (sensoren)" volledig opgeheven — DHT22-/DS18B20-kamerdata verhuisd naar Verwarming, incl. een nieuwe samengevoegde regel "Kamertemperatuur (bron: ...)" (vervangt de twee losse regels "DS18B20 primair" + "Room temp") en een regel "Effectieve setpoint met % vochtigheid"; de Melding-regel toont voortaan altijd een statuszin (i.p.v. enkel bij een fout), met kleurcodering (groen/oranje/rood); "DS18B20 gevonden" verhuisd naar "Alle DS18B20-sensoren". "Verlichting" samengevoegd met "Powerpixels" tot 1 sectie; "LDR1 (donker=100)" hernoemd naar "OMGEVINGSLICHT (donker=100)". Google Sheets-interval nu instelbaar in Settings (was vast 5 min) — het PIR-telvenster volgt automatisch diezelfde waarde (zie 5.3/5.6) |
+| v1.1 | Verwarmings-setpoint-slider: minimum 5°C (was 10°C), op `/advanced` en de landingspagina. Sectietitel "Verwarming / relais (WOLF E1)" vereenvoudigd naar "Verwarming"; "Powerpixels" hernoemd naar "Verlichting". `/settings`: volgorde "Herscan DS18B20-bus" en "Opslaan & herstart" omgewisseld (herscan staat nu eerst). Landingspagina: vlam-/douche-icoon (verwarming/SWW) nu in een statuscirkel (wit = rust, lichtrood/rode rand = ketelvraag/pomp actief) i.p.v. een los kleurbolletje naast het icoon. |
+| **v1.2** | **`/json` volledig herwerkt naar een compact schema met positionele sleutels (`a`, `b`, `c`, ... + `room`), in dezelfde stijl als het Zarlar-roomproject — i.p.v. de lange beschrijvende sleutels. Dit ene schema voedt zowel de live-UI (`/advanced` + landingspagina) als de Google Sheets-log. Bewust weggelaten uit de live-JSON (blijven wel zichtbaar bij het laden van de pagina): betrouwbaarheids-/fallback-vlaggen, tekstuele meldingen, IP/mDNS/crash-teller/firmwareversie, Auto/Handmatig-togglestatus, hysterese-waarden, per-sensor-detail van niet-toegewezen DS18B20's, Sheets-/PIR-intervaltekst en duty-cyclus. Nieuw Google Apps Script (`SJALAY_SHEETS_LOGGER.gs`, zie 6.1) hoort bij dit schema — het vorige script is niet langer compatibel.** |
 
 ### 5.10 SWW-regeling, boilersensor en veiligheidsontwerp
 
@@ -403,9 +409,9 @@ Meest kansrijk om ooit toe te voegen: **Shelly Flood** (waterlek-detectie in een
 **Sensorrollen (Settings):**
 - **Primaire sensor (kamer)** — bestond al, stuurt relais 1
 - **Boilersensor** — apart instelbaar, stuurt relais 2; optie "(geen)" mogelijk
-- Sensoren zonder rol (bv. de T-bus/kelder-testsensor) krijgen gewoon geen speciale functie, maar staan wel mee in de "Alle DS18B20-sensoren"-lijst op `/advanced`/`json`
+- Sensoren zonder rol (bv. de T-bus/kelder-testsensor) krijgen gewoon geen speciale functie, maar staan wel mee in de "Alle DS18B20-sensoren"-lijst op `/advanced`
 
-**Boiler-setpoint:** slider (op `/advanced`, en sinds v0.12 ook direct aanpasbaar op de landingspagina), 40-60°C, default 40°C, stappen van 1°C. Stuurt relais 2 automatisch aan (Auto-modus).
+**Boiler-setpoint:** slider (op `/advanced`, en sinds v0.12 ook direct aanpasbaar op de landingspagina), **10-60°C (bereik verruimd in v1.0, was 40-60°C)**, default 40°C, stappen van 1°C. Stuurt relais 2 automatisch aan (Auto-modus).
 
 **Hysterese (beide circuits):** een echte symmetrische band rond de setpoint. Default **1,0°C** voor verwarming, **5,0°C** voor SWW (grotere boilermassa = trager systeem, minder pompcycli nodig) — beide instelbaar in Settings.
 
@@ -420,19 +426,19 @@ Meest kansrijk om ooit toe te voegen: **Shelly Flood** (waterlek-detectie in een
 
 Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijven die indien nodig.
 
-### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13, bed-modus toegevoegd in v0.15, pixel-0-modusknop toegevoegd in v0.16)
+### 5.11 Eenvoudige landingspagina (nieuw in v0.12, bijgeschaafd in v0.13, bed-modus toegevoegd in v0.15, pixel-0-modusknop toegevoegd in v0.16, statuscirkels sinds v1.1)
 
 **Aanleiding:** gasten/huurders hebben niets aan Auto/Handmatig-schakelaars, hysterese-instellingen of sensordiagnostiek — enkel licht aan/uit + kleur, en een comfortabele temperatuur voor verwarming/warm water, met zo weinig mogelijk tekst en iconen.
 
 - **`/`** is nu deze landingspagina (`handleLanding()`); de vroegere Status-pagina verhuisde **ongewijzigd** naar **`/advanced`** (`handleStatus()`, enkel het pad veranderde). Bereikbaar vanop de landingspagina via een klein tandwiel-icoon ⚙️ onderaan, zonder tekst.
 - **Verlichting:** grote tegels in een grid, één per pixel (inclusief pixel 0/MOV1) — tegelkleur = de ingestelde RGB-kleur wanneer aan, grijs/wit wanneer uit, pixelnaam eronder (geen apart lampje-icoon boven het grid meer sinds v0.13 — dat stond dubbelop met de lampjes op de tegels zelf). Aanraken = direct schakelen (`/toggle_pixel`). Eén kleurkiezer onder het grid voor de gedeelde RGB-kleur van alle pixels (`/setcolor`).
-  - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen. Sinds v0.16 kan je via de nieuwe modusknop (zie hieronder) ook expliciet terug naar AUTO schakelen.
-- **Verwarming/SWW:** elke kaart heeft één eigen icoon (🔥/🚿, met een klein statuslampje ernaast voor ketelvraag/pomp actief) — geen los sectie-icoon ernaast (dubbelop met het kaart-icoon). Daaronder, sinds v0.13 op **één lijn** in de kaartkleur (oranje voor verwarming, blauw voor SWW): eerst groot de **huidige, gemeten temperatuur** (`room_temp`/`temp_boiler` — "IST", waar een gast eerst naar kijkt), gevolgd door de **effectieve/gevraagde doeltemperatuur** kleiner tussen haakjes ("SOLL": `effective_setpoint` voor verwarming, `boiler_setpoint` voor SWW), bv. `21.3° (→ 21°)`. Bij een onbetrouwbare sensor toont het IST-cijfer "n.v.t." i.p.v. een onzinnige waarde. Daaronder de setpoint-schuifregelaar. Géén Auto/Handmatig-schakelaar, géén los relais zichtbaar.
+  - Pixel 0 kan nog in AUTO (PIR+donker) staan; aanraken vanop de landingspagina schakelt hem dan automatisch naar MANUEEL (zie `/toggle_pixel`-wijziging in 5.2) — zo werkt de tegel altijd als eenvoudige aan/uit-knop, zonder dat een gast het AUTO/MANUEEL-onderscheid moet kennen. Sinds v0.16 kan je via de modusknop ook expliciet terug naar AUTO schakelen.
+- **Verwarming/SWW:** elke kaart toont het vlam-/douche-icoon (🔥/🚿) **sinds v1.1 in een statuscirkel**: wit gevuld met witte rand in rust, lichtrood gevuld met felrode rand zodra de ketelvraag resp. SWW-pomp actief is (vervangt het kleine kleurbolletje van v1.0 en eerder). Daaronder, sinds v0.13 op **één lijn** in de kaartkleur (oranje voor verwarming, blauw voor SWW): eerst groot de **huidige, gemeten temperatuur** ("IST"), gevolgd door de **setpoint** kleiner tussen haakjes ("SOLL"), bv. `21.3° (→ 21°)`. Daaronder de setpoint-schuifregelaar (**verwarming 5-30°C sinds v1.1**, SWW 10-60°C sinds v1.0). Géén Auto/Handmatig-schakelaar, géén los relais zichtbaar.
 - **Veiligheid:** bij **elke** keer dat `/` geladen wordt, worden beide regelkringen geforceerd naar Auto gezet — ook als iemand ze op `/advanced` bewust op Handmatig had gezet. NVS wordt enkel effectief beschreven bij een échte wissel (niet bij elke herlaad/refresh), om onnodige flash-writes te vermijden.
-- Geen nieuwe `/json`-velden nodig: de landingspagina hergebruikt exact dezelfde live-refresh-payload (elke 3s) als `/advanced` — `rt`/`bt` voeden het grote IST-cijfer, `heff`/`bsp` het kleine SOLL-stuk tussen haakjes.
+- De landingspagina hergebruikt dezelfde live-refresh-payload (elke 3s) als `/advanced` — sinds v1.2 de compacte sleutels `d`/`k` (IST verwarming/SWW) en `c`/`j` (setpoint verwarming/SWW), zie hoofdstuk 6. Een eventuele sensor-onbetrouwbaarheid ("n.v.t.") wordt sinds v1.2 enkel nog getoond bij het laden van de pagina zelf, niet meer bij elke live-refresh (dat veld zit niet meer in het compacte schema).
 - 🏠-icoon toegevoegd aan de sidebar van `/advanced`, `/update` en `/settings` (terug naar `/`) — verschijnt bewust **niet** op de landingspagina zelf.
-- **Bed-modus/nachtmodus (nieuw in v0.15):** een ronde knop (🛏️, `&#128719;`), exact even groot als de kleurkiezer (52px), onder het lichten-grid. Voorkomt dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts automatisch aangaat — handig als gasten in die kamer slapen. Hergebruikt volledig de bestaande `bed`-variabele/NVS-instelling en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9, voordien enkel bereikbaar via `/advanced`); er is geen nieuwe backend-logica nodig, want `updatePixelLogic()` forceerde pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens bed-modus getoond als een "vergrendelde" tegel (maan-icoon 🌙, gedimd, geen tik-actie) in plaats van een tegel die een tik toch zou negeren — dat zou verwarrend zijn. De bed-knop zelf licht donkerblauw op zolang bed-modus actief is. Alles synct live mee (elke 3s) via het bestaande `/json`-veld `"bed"` (al aanwezig sinds v0.9), dus ook als bed-modus via `/advanced` wordt aan/uitgezet, past de landingspagina zich automatisch aan.
-- **Pixel-0-modusknop AUTO/MANUEEL (nieuw in v0.16):** een tweede ronde knop, exact even groot als de bed-knop (52px), er onmiddellijk naast geplaatst — zo staan de twee gerelateerde pixel-0-knoppen samen in één rij. Toont 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen zolang MANUEEL actief is — zelfde stijl als de bed-knop, andere kleur). Een tik wisselt tussen de twee via het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2, voordien enkel op `/advanced`) — geen nieuwe backend-logica. Deze knop is enkel de ontbrekende weg terug naar AUTO vanaf de landingspagina; het bestaande gedrag (een tik op de pixel-0-tegel zelf schakelt nog steeds impliciet naar MANUEEL) blijft ongewijzigd. Live sync via het bestaande `/json`-veld `"p0m"` (al aanwezig). Getest op het thuisnetwerk (30/09) en bevestigd werkend.
+- **Bed-modus/nachtmodus (nieuw in v0.15):** een ronde knop (🛏️, `&#128719;`), exact even groot als de kleurkiezer (52px), onder het lichten-grid. Voorkomt dat pixel 0 (de bewegings-/schemergestuurde lichtgroep) 's nachts automatisch aangaat — handig als gasten in die kamer slapen. Hergebruikt volledig de bestaande `bed`-variabele/NVS-instelling en het `/toggle_bed`-endpoint (al aanwezig sinds v0.9, voordien enkel bereikbaar via `/advanced`); er is geen nieuwe backend-logica nodig, want `updatePixelLogic()` forceerde pixel 0 al uit tijdens bed-modus. Op de landingspagina wordt pixel 0 tijdens bed-modus getoond als een "vergrendelde" tegel (maan-icoon 🌙, gedimd, geen tik-actie) in plaats van een tegel die een tik toch zou negeren — dat zou verwarrend zijn. De bed-knop zelf licht donkerblauw op zolang bed-modus actief is.
+- **Pixel-0-modusknop AUTO/MANUEEL (nieuw in v0.16):** een tweede ronde knop, exact even groot als de bed-knop (52px), er onmiddellijk naast geplaatst — zo staan de twee gerelateerde pixel-0-knoppen samen in één rij. Toont 🔄 in AUTO, ✋ in MANUEEL (opgelicht, groen zolang MANUEEL actief is — zelfde stijl als de bed-knop, andere kleur). Een tik wisselt tussen de twee via het bestaande `/toggle_pixel_mode`-endpoint (al aanwezig sinds v0.2, voordien enkel op `/advanced`) — geen nieuwe backend-logica. Deze knop is enkel de ontbrekende weg terug naar AUTO vanaf de landingspagina; het bestaande gedrag (een tik op de pixel-0-tegel zelf schakelt nog steeds impliciet naar MANUEEL) blijft ongewijzigd.
 
 ### 5.12 mDNS/Bonjour — `http://<naam>.local/` (nieuw in v0.14)
 
@@ -443,57 +449,77 @@ Beide lagen worden gecontroleerd **na** de Auto/Handmatig-logica en overschrijve
 - **Validatie (`sanitizeMdnsName()`):** invoer wordt automatisch omgezet naar kleine letters, enkel `a-z`, `0-9` en `-` blijven staan (andere tekens, spaties, punten worden weggegooid), geen leidend/sluitend streepje, en bij een lege of volledig ongeldige invoer valt de naam terug op `"sjalay"` — een wijziging in Settings kan dus nooit een onbruikbare hostnaam opleveren.
 - **Opstart:** `MDNS.begin(mdns_name)` + `MDNS.addService("http","tcp",80)` gebeurt in `setup()`, ná een geslaagde Wi-Fi-verbinding (`!ap_mode_active`) — in de AP-setup-modus blijft het vaste `192.168.4.1` het aanspreekpunt, daar voegt mDNS niets toe.
 - **Een nieuwe naam vereist een herstart** (net als elk ander Settings-veld — `/save_settings` herstart altijd).
-- Zichtbaar op `/advanced` (nieuwe rij "mDNS-naam" naast "IP-adres") en in `/json` als `"mdns"`. Niet apart getoond op de landingspagina (die blijft bewust tekstarm), maar werkt daar uiteraard even goed: `http://sjalay.local/` opent rechtstreeks de landingspagina.
+- Zichtbaar op `/advanced` (nieuwe rij "mDNS-naam" naast "IP-adres"), enkel bij het laden van de pagina (niet meer in `/json` sinds v1.2). Niet apart getoond op de landingspagina (die blijft bewust tekstarm), maar werkt daar uiteraard even goed: `http://sjalay.local/` opent rechtstreeks de landingspagina.
 - **Beperking om te weten:** mDNS werkt enkel binnen hetzelfde lokale netwerk (niet via Tailscale/internet) en vereist mDNS-ondersteuning op het toestel dat verbindt — in de praktijk vrijwel altijd aanwezig (macOS/iOS: Bonjour ingebouwd; Android en Windows 10/11: meestal ook), maar bij twijfel blijft het IP-adres op `/advanced` de garantie die altijd werkt.
+
+### 5.13 Statuspagina-indeling (`/advanced`, herschikt in v1.0/v1.1)
+
+De technische statuspagina is sinds v1.0 herschikt en samengevoegd, zodat alles rond een circuit (verwarming, SWW) bij elkaar staat in plaats van verspreid over een aparte "HVAC"-sectie. Volgorde van boven naar onder:
+
+1. **Verwarming** *(v1.0: "Verwarming / relais (WOLF E1)"; vereenvoudigd in v1.1)* — automatisch/handmatig, relais, setpoint (5-30°C sinds v1.1), **"Effectieve setpoint met % vochtigheid"**, DHT22 temp/vocht, dauwpunt, samengevoegde regel **"Kamertemperatuur (bron: ...)"** (DS18B20-nickname of "DHT22 (fallback)"), **Melding** (toont altijd een statuszin, kleurcodering groen/oranje/rood), ketelvraag, duty-cyclus, hysterese. *(v0.16 en vroeger: de DHT22-/DS18B20-kamerdata stonden in een aparte sectie "HVAC (sensoren)" — die sectie bestaat sinds v1.0 niet meer.)*
+2. **SWW boiler** *(v0.16 en vroeger: "SWW / boilerwater (relais 2, laadpomp)")* — automatisch/handmatig, relais 2, boiler-setpoint (10-60°C), boilertemperatuur, SWW-pomp, hysterese, melding.
+3. **Alle DS18B20-sensoren** — inclusief de teller "DS18B20 gevonden" (verhuisd uit de vroegere HVAC-sectie), gevolgd door elke gevonden sensor met rol (kamer/boiler/geen).
+4. **Verlichting** *(v1.0: "Powerpixels", samengevoegd met de toenmalige aparte sectie "Verlichting"; hernoemd naar "Verlichting" in v1.1)* — begint met **"OMGEVINGSLICHT (donker=100)"** (hernoemd uit "LDR1") en bed-modus, gevolgd door kleur, dim-snelheid, licht-aan-tijd, pixel-0-modus en de pixellijst.
+5. **Beweging** — PIR-trigger-teller, label volgt sinds v1.0 dynamisch de Sheets-interval ("PIR MOV1 trig/X min", enkel bij het laden van de pagina sinds v1.2 — zie 5.8).
+6. **Logging** — Google Sheets aan/uit + interval, laatste resultaatcode (enkel bij het laden van de pagina sinds v1.2 — zie 5.8).
+7. **Controller** *(verhuisd naar hier in v1.0 — stond voorheen bovenaan)* — IP-adres, mDNS-naam, Wi-Fi RSSI, MAC-adres, vrije heap, grootste blok, crash-teller, firmwareversie.
 
 ---
 
 ## 6. JSON-velden (`/json`)
 
-Compact schema, gebruikt door live-UI (elke 3s, zowel `/` als `/advanced`) en Google Sheets-log (elke 5min). Booleans als `true`/`false`.
+**Volledig herwerkt in v1.2.** Compact schema met **positionele sleutels** (`a`, `b`, `c`, ...) i.p.v. beschrijvende namen — enkel `room` staat voluit, net als in het Zarlar-roomproject. Dit ene schema voedt zowel de live-UI (elke 3s, zowel `/` als `/advanced`) als de Google Sheets-log (zelfde payload gepost, interval instelbaar — zie 5.6). Alle waarden zijn getallen of strings (geen `true`/`false` meer — booleans zijn `0`/`1`).
 
-| Veld | Type | Beschrijving |
-|---|---|---|
-| `rid` | string | Room-naam |
-| `ver` | string | Firmwareversie |
-| `ip` | string | IP-adres |
-| `mdns` | string | mDNS-hostnaam zonder `.local` (v0.14) — volledig adres is `http://<mdns>.local/` |
-| `rssi` | int | Wi-Fi signaal (dBm) |
-| `heap` | uint | Vrije heap (KB) |
-| `lb` | uint | Grootste vrije geheugenblok (KB) |
-| `crash` | uint | Aantal geregistreerde crashes |
-| `upt` | ulong | Uptime (s) |
-| `ap` | bool | AP/setup-modus? |
-| `t2`/`t2ok` | float/bool | DHT22-temp + geldigheid |
-| `h` | float | DHT22-vochtigheid (%) |
-| `dp` | float | Dauwpunt (°C) |
-| `t1` | float | DS18B20 primaire (kamer) temp |
-| `dsok`/`dsc` | bool/int | DS18B20 gevonden? / aantal |
-| `rt`/`rtok` | float/bool | Effectieve room_temp (na terugvalketen) + betrouwbaarheid — `rt` voedt het grote IST-cijfer op de landingspagina |
-| `tm` | string | Sensor-waarschuwing (kamer) |
-| `ldr` | int | Lichtwaarde 0-100 (100=donker) |
-| `mov` | int | PIR-triggers laatste minuut |
-| `hauto`/`hsp`/`heff` | bool/int/float | Verwarming auto? / setpoint / effectieve setpoint — `heff` voedt het kleine SOLL-stuk (tussen haakjes) op de landingspagina |
-| `rman`/`hon` | bool/bool | Handmatige relais-1-stand / ketelvraag actief |
-| `duty` | float | Duty-cyclus verwarming 4u (%) |
-| `hcv` | float | Hysteresisband verwarming (°C) |
-| `dsb` | int | Index van de boilersensor (-1 = geen) |
-| `bt`/`btok` | float/bool | Boilertemperatuur + betrouwbaarheid — `bt` voedt het grote IST-cijfer op de landingspagina |
-| `btm` | string | SWW-sensor-waarschuwing |
-| `swauto`/`bsp` | bool/int | SWW auto? / boiler-setpoint — `bsp` voedt het kleine SOLL-stuk (tussen haakjes) op de landingspagina |
-| `sw2man`/`swon` | bool/bool | Handmatige relais-2-stand / pomp actief |
-| `hsww` | float | Hysteresisband SWW (°C) |
-| `dsl` | array | Alle gevonden DS18B20's: `[{"n":naam,"t":temp,"ok":bool,"role":"kamer"/"boiler"/""}]` |
-| `bed`/`p0m`/`p0on` | bool/int/bool | Bed-modus / pixel-0-modus / pixel-0-staat — `bed` stuurt de vergrendelde weergave van pixel-0-tegel + bed-knop, `p0m` stuurt sinds v0.16 ook het icoon van de nieuwe AUTO/MANUEEL-knop op de landingspagina |
-| `pn`/`fd`/`lom` | int | Aantal pixels / fade-snelheid / licht-aan-tijd — `pn` bepaalt hoeveel licht-tegels de landingspagina tekent |
-| `pon` | string | Bitstring aan/uit-status per pixel |
-| `nr`/`ng`/`nb` | int | Huidige RGB-kleur |
-| `gas`/`gcode` | bool/int | Sheets-logging aan? / laatste HTTP-code |
+| Key | Type | Betekenis | Sheet-kolom (zie 6.1) |
+|---|---|---|---|
+| `room` | string | Room-naam | Kamer |
+| `a` | ulong | Uptime (s) | Uptime (s) |
+| `b` | int (0/1) | Ketelvraag aan/uit | HEAT |
+| `c` | int | Verwarmings-setpoint (°C) | Set (°C) |
+| `d` | float | Kamertemperatuur, effectief gebruikt (na terugvalketen) | Temp1 (°C) |
+| `e` | float | DHT22-temperatuur (rauw, controlewaarde) | Temp2 (°C) |
+| `f` | float | DHT22-vochtigheid (%) | Vocht (%) |
+| `g` | float | Dauwpunt (°C) | Dauwpt (°C) |
+| `h` | int (0/1) | Dauwpunt-correctie actief (effectieve setpoint > ingestelde setpoint) | Dew Alert |
+| `i` | int (0/1) | SWW-pomp aan/uit | SWW pomp |
+| `j` | int | Boiler-setpoint (°C) | SWW Set (°C) |
+| `k` | float | Boilertemperatuur | Boiler (°C) |
+| `l` | int | LDR-waarde (0-100, 100=donker) | Licht LDR |
+| `m` | int (0/1) | Nacht — LDR voorbij de donker-drempel | Nacht |
+| `n` | int (0/1) | Bed-modus aan/uit | Bed |
+| `o`/`p`/`q` | int | Huidige RGB-kleur (R/G/B) | R / G / B |
+| `r` | string | Pixels aan, bitstring met `"P="`-prefix (bv. `"P=10001000"`) — prefix bewaart leidende nullen bij het loggen | Pixels aan |
+| `s` | int (0/1) | Pixel-0-modus (0=AUTO, 1=MANUEEL) | Pixel mode |
+| `t` | int | PIR-triggers binnen het telvenster (venster = Sheets-interval, zie 5.6) | MOV1 |
+| `u` | int | Wi-Fi-signaal (dBm) | RSSI (dBm) |
+| `v` | uint | Vrije heap (KB) | Heap vrij (KB) |
+| `w` | uint | Grootste vrije geheugenblok (KB) | Heap blok (KB) |
+| `x` | int | Aantal gevonden DS18B20's | DS count |
+
+**Bewust niet meer in `/json`** (blijven wel zichtbaar bij het laden van `/advanced`, zie 5.8): IP-adres, mDNS-naam, crash-teller, firmwareversie, AP-modus, betrouwbaarheids-/fallback-vlaggen (voorheen `rtok`/`rtfb`/`btok`), tekstuele meldingen (voorheen `tm`/`btm`), bronnaam kamertemperatuur (voorheen `rsrc`), Auto/Handmatig-togglestatus (voorheen `hauto`/`rman`/`swauto`/`sw2man`), hysterese-waarden (voorheen `hcv`/`hsww`), duty-cyclus, dim-snelheid/licht-aan-tijd (voorheen `fd`/`lom`), per-sensor-detail van niet-toegewezen DS18B20's (voorheen `dsl`), Sheets-/PIR-intervalwaarde zelf (voorheen `sint` — de instelling blijft uiteraard gewoon bestaan, enkel niet meer live doorgegeven), Sheets-logging-status/laatste-resultaatcode (voorheen `gas`/`gcode`), en effectieve/berekende verwarmings-setpoint (voorheen `heff` — enkel de ingestelde `c` blijft over).
+
+### 6.1 Google Apps Script (Sheets-logger)
+
+Het Sheets-logging-script (`SJALAY_SHEETS_LOGGER.gs`) is gebaseerd op het Zarlar-roomproject-script (ROOM CONTROLLER DATA LOGGER) en aangepast aan het schema hierboven. **Nieuw script, niet compatibel met vorige versies van de sketch (v1.1 en eerder).**
+
+**26 kolommen (A t/m Z)**, in dezelfde volgorde als de tabel in hoofdstuk 6: Tijdstempel (door het script zelf toegevoegd, niet door de sketch gestuurd), dan Uptime t/m DS count.
+
+**Installatie (eenmalig, nieuwe Google Sheet of bestaand tabblad):**
+1. Google Sheet openen → **Extensies → Apps Script**
+2. De inhoud van `SJALAY_SHEETS_LOGGER.gs` plakken (vervangt het eventuele oude room-script als je hetzelfde Apps Script-project hergebruikt — gebruik liever een **apart** Apps Script-project voor Sjalay, niet hetzelfde project als het roomproject)
+3. Functie `setupHeaders` eenmalig uitvoeren (Uitvoeren-knop, functie `setupHeaders` selecteren) — maakt de titelrij + 26 kolomkoppen aan
+4. **Implementeren → Nieuwe implementatie** → type "Webapp" → Uitvoeren als "Ik", Toegang "Iedereen" → Implementeren → de gegeven URL kopiëren
+5. Die URL invullen bij **Google Script-URL** in de Sjalay-Settings (§5.3) en opslaan (herstart)
+6. Optioneel: functie `test` uitvoeren om een voorbeeldrij te loggen zonder op de echte controller te wachten
+
+**Bij een latere update van het script:** altijd **"Implementaties beheren" → potlood-icoon (Bewerken) → versienummer verhogen → Implementeren** gebruiken, nooit "Nieuwe implementatie" — dat laatste geeft een nieuwe URL, waardoor de Sjalay-Settings opnieuw aangepast moeten worden.
 
 ---
 
 ## 7. Openstaande punten
 
+- [ ] **Nieuw Apps Script (`SJALAY_SHEETS_LOGGER.gs`) implementeren en de Google Script-URL bijwerken in Settings** (zie 6.1) — anders faalt de Sheets-logging na het flashen van v1.2 (oud script verstaat het nieuwe compacte schema niet)
+- [ ] **v1.2-sketch testen op het thuisnetwerk** (compact `/json`-schema, herschikte statuspagina, instelbare Sheets-interval, boiler-setpoint 10-60°C, verwarmings-setpoint 5-30°C) — nog niet apart getest sinds de v1.0/v1.1/v1.2-wijzigingen
 - [ ] Bestaande brug over E1 verwijderen vóór het relais aan te sluiten (zie 1.2)
 - [ ] Relais-1-test met ESP32 (IO10) op de echte E1-klemmen
 - [ ] Omschakeling uitvoeren: HG24 op 3 zetten, fabriekssensor loskoppelen, relais 2 op de SF-klem aansluiten, ketel herstarten — zie 1.4
