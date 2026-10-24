@@ -3,7 +3,7 @@
 **Locatie:** Sjalay (Recht) — geen vaste WiFi/fiber, internet via 4G
 **Basis:** ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging, Tailscale voor toegang van buitenaf
 **Sketch:** v1.3 (`SJALAY_CONTROLLER_v1.0.ino`, bestandsnaam is historisch)
-**Laatst bijgewerkt:** 24 okt 2026
+**Laatst bijgewerkt:** 24 okt 2026 (avond)
 
 De controller doet vier dingen:
 
@@ -348,6 +348,15 @@ Werkwijze: telkens één stap, **eerst akkoord van FiDel**, daarna sketch/script
 - [ ] CV AAN-kant testen (kamer koelt af; setpoint boven de kamertemperatuur)
 - [ ] Bedrading afwerken met kabelgootjes; isolatie onderaan de boiler bijwerken
 - [ ] Hysterese-defaults (1,0 °C CV / 5,0 °C SWW) evalueren, rekening houdend met de restwarmte na het uitgaan van de brander
+
+**Meten volgend bezoek: DHT22 en herstarts (met mini-scoop)**
+- [ ] Meetsituatie: DHT22 werkt na een power cycle ~30 s en valt dan weg (24/10, voeding op 5,0 V gezet). Meten terwijl hij **uitgevallen** is en ook tijdens het opstarten/Wi-Fi-verbinding
+- [ ] Spanning op de **DHT22-pennen** (VCC–GND, in de RoomSense-box) en op de **3,3 V-pen** van de shield: zakt hij onder ~3,3 V op het moment van uitvallen? (scoop: let op pieken bij Wi-Fi-zending)
+- [ ] **Datalijn** (IO6) bekijken: signaal bij een leescyclus, storing bij het schakelen van de relais of bij ketel/pomp
+- [ ] **5 V** op de shield, onder belasting (relais aan/uit)
+- [x] Genoteerd: DHT22 draait op **3,3 V** (onderkant van zijn bereik 3,3–6 V; op 5 V zetten kan niet, want de datalijn zou dan 5 V krijgen). RoomSense-box en sensor zijn **identiek aan thuis**. Het grote verschil met thuis is de **4-relaismodule** (kanalen 1 en 4 in gebruik), die thuis in de testroom-controller niet aanwezig is
+- [ ] Mogelijke oorzaken in volgorde: **4-relaismodule** (spoelstroom en ruis op 5 V/massa), spanningsdip bij Wi-Fi-zending, storing van de ketel op de kabels
+- [ ] **Test (kan ook voor vertrek):** VCC van de 4-relaismodule loskoppelen (relais vallen af, CV/SWW tijdelijk uit), controller kort stroomloos zetten, na 2–3 min `f` in `/json` bekijken. DHT22 blijft werken → oorzaak is de relaismodule (oplossing: aparte 5 V-voeding of betere voedingsverdeling). Valt hij weg → relaismodule uitsluiten en verder meten met de scoop. Module daarna weer aansluiten
 
 **Materiaallijst volgend bezoek (extra DS18B20's: ketelpomp en retourleiding)**
 - [ ] 2 extra **waterdichte DS18B20-sensoren**
