@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.3 — 1 okt 2026
+// SJALAY CONTROLLER — v1.4 — 25 okt 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -57,6 +57,23 @@
 //                  setpoint, net als vóór v1.2). Bewust NIET opgenomen in het Apps
 //                  Script, dus niet gelogd naar Google Sheets.
 // ----------------------------------------------------------------------------
+// v1.4 (25okt26): - Diagnose: reset-reden (esp_reset_reason) + opstartteller (NVS) op
+//                  /advanced en in /json (z, A) -> zichtbaar in Sheets (Reset, Boots).
+//                - DHT22-bewaking: fouten-reeks (B), totaal fouten (C), leeftijd van
+//                  laatste geldige meting op /advanced. Bij uitval blijft de laatste
+//                  geldige waarde gelden voor vocht/dauwpunt tot de sensor terugkeert.
+//                  Na 5 opeenvolgende fouten wordt dht.begin() opnieuw uitgevoerd.
+//                  Ruwe e/f staan op null in /json zolang de DHT22 faalt (was 0).
+//                  Als kamer-terugval wordt de DHT22 enkel gebruikt als de laatste
+//                  geldige meting jonger is dan 5 min.
+//                - Google-POST: timeout 5 s, mislukkingsteller (D) en laatste duur.
+//                - 3 extra DS18B20-rollen (kelder, ketelpomp, retour) in /settings;
+//                  JSON E, F, G (null als niet toegewezen of defect). Max 6 sensoren.
+//                - Nieuw Apps Script v1.1 vereist (kolommen AA t/m AH).
+//                - Dauwpuntmarge nu ook negatief instelbaar (-10 t/m +10 °C): effectieve
+//                  setpoint = max(setpoint, dauwpunt + marge); met een negatieve marge
+//                  grijpt de dauwpuntcorrectie pas later of niet in (vochtrisico voor eigen rekening).
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -78,7 +95,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.3"
+#define SJALAY_VERSION "1.4"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -115,18 +132,36 @@ DHT dht(DHT_PIN, DHT22);
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);
 
 // DS18B20 multi-sensor — max 4 op 1 bus
-#define DS_MAX_SENSORS 4
+#define DS_MAX_SENSORS 6
 int ds_count = 0;
 OneWireNg::Id ds_addrs[DS_MAX_SENSORS];
 float temp_ds_arr[DS_MAX_SENSORS];
 char ds_nicknames[DS_MAX_SENSORS][48];
 int ds_primary = 0;
 int ds_boiler = -1;                          // index van de boilersensor, -1 = geen toegewezen
+int ds_cellar = -1;                          // v1.4: kelder (enkel monitoring/logging)
+int ds_pump   = -1;                          // v1.4: ketelpomp / aanvoer (enkel monitoring/logging)
+int ds_return = -1;                          // v1.4: retour (enkel monitoring/logging)
+uint32_t ds_fail_total = 0;                  // v1.4: totaal aantal mislukte DS18B20-lezingen sinds boot
 bool ds_valid_this_read[DS_MAX_SENSORS];     // laatste-lezing geldig? (voor UI/json)
 int ds_fail_streak[DS_MAX_SENSORS] = {0};    // opeenvolgende mislukte lezingen per sensor
 
 // Sensorwaarden
-float temp_dht = 0, temp_ds = 0, humi = 0, dew = 0, room_temp = 0;
+float temp_dht = NAN, temp_ds = 0, humi = NAN, dew = 0, room_temp = 0;  // DHT: NAN tot eerste geldige meting; daarna laatste geldige waarde vastgehouden
+
+// v1.4 diagnostiek
+char reset_reason_txt[16] = "?";
+uint32_t boot_count = 0;
+bool dht_ok = false;                  // laatste DHT22-lezing geldig?
+bool dht_ever_valid = false;          // sinds boot al ooit een geldige meting?
+uint16_t dht_fail_streak = 0;         // opeenvolgende mislukte lezingen
+uint32_t dht_fail_total = 0;          // totaal mislukte lezingen sinds boot
+uint32_t dht_reinit_count = 0;        // aantal keren dht.begin() opnieuw uitgevoerd
+unsigned long dht_last_valid_ms = 0;  // millis() van laatste geldige meting
+#define DHT_REINIT_AFTER   5          // opeenvolgende fouten vóór dht.begin()
+#define DHT_FALLBACK_MAX_AGE_MS 300000UL  // DHT22 als kamer-terugval enkel als laatste meting < 5 min oud
+uint32_t sheets_fail_total = 0;       // mislukte Google-POSTs sinds boot
+unsigned long sheets_last_ms = 0;     // duur van laatste POST (ms)
 float temp_boiler = 0;
 int light_ldr = 0;
 int mov1_triggers = 0;
@@ -364,6 +399,15 @@ void scanDS18B20() {
   ds_boiler = preferences.getInt("ds_boiler", -1);
   if (ds_boiler >= ds_count) ds_boiler = -1;  // ongeldig geworden na herscan (minder sensoren) -> resetten
   preferences.putInt("ds_boiler", ds_boiler);
+  ds_cellar = preferences.getInt("ds_cellar", -1);
+  if (ds_cellar >= ds_count) ds_cellar = -1;
+  preferences.putInt("ds_cellar", ds_cellar);
+  ds_pump = preferences.getInt("ds_pump", -1);
+  if (ds_pump >= ds_count) ds_pump = -1;
+  preferences.putInt("ds_pump", ds_pump);
+  ds_return = preferences.getInt("ds_return", -1);
+  if (ds_return >= ds_count) ds_return = -1;
+  preferences.putInt("ds_return", ds_return);
   for (int i = 0; i < DS_MAX_SENSORS; i++) ds_fail_streak[i] = 0;
   preferences.end();
 }
@@ -374,6 +418,12 @@ void loadDS18B20fromNVS() {
   ds_primary = constrain(preferences.getInt("ds_primary", 0), 0, max(ds_count - 1, 0));
   ds_boiler = preferences.getInt("ds_boiler", -1);
   if (ds_boiler >= ds_count) ds_boiler = -1;
+  ds_cellar = preferences.getInt("ds_cellar", -1);
+  if (ds_cellar >= ds_count) ds_cellar = -1;
+  ds_pump = preferences.getInt("ds_pump", -1);
+  if (ds_pump >= ds_count) ds_pump = -1;
+  ds_return = preferences.getInt("ds_return", -1);
+  if (ds_return >= ds_count) ds_return = -1;
   for (int i = 0; i < ds_count; i++) {
     char akey[16]; snprintf(akey, sizeof(akey), "ds_addr_%d", i);
     preferences.getBytes(akey, ds_addrs[i], 8);
@@ -407,6 +457,7 @@ void readDS18B20temps() {
     if (crc != data[8]) {
       Serial.printf("[DS18B20] CRC fout sensor %d — waarde genegeerd\n", i);
       if (ds_fail_streak[i] < 255) ds_fail_streak[i]++;
+      ds_fail_total++;
       continue;
     }
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
@@ -415,8 +466,9 @@ void readDS18B20temps() {
       temp_ds_arr[i] = t;
       ds_valid_this_read[i] = true;
       ds_fail_streak[i] = 0;
-    } else if (ds_fail_streak[i] < 255) {
-      ds_fail_streak[i]++;
+    } else {
+      if (ds_fail_streak[i] < 255) ds_fail_streak[i]++;
+      ds_fail_total++;
     }
   }
   temp_ds     = (ds_primary >= 0 && ds_primary < ds_count) ? temp_ds_arr[ds_primary] : 0.0f;
@@ -424,9 +476,28 @@ void readDS18B20temps() {
 }
 
 void readAllSensors() {
-  humi = dht.readHumidity();
-  temp_dht = dht.readTemperature();
-  dew = calculateDewPoint(temp_dht, humi);
+  // v1.4: DHT22 met bewaking. Bij een mislukte lezing blijven humi/temp_dht op de
+  // laatste geldige waarde staan (vocht/dauwpunt), tot de sensor terugkeert.
+  float h_new = dht.readHumidity();
+  float t_new = dht.readTemperature();
+  if (!isnan(h_new) && !isnan(t_new)) {
+    humi = h_new;
+    temp_dht = t_new;
+    dht_ok = true;
+    dht_ever_valid = true;
+    dht_fail_streak = 0;
+    dht_last_valid_ms = millis();
+  } else {
+    dht_ok = false;
+    if (dht_fail_streak < 65535) dht_fail_streak++;
+    dht_fail_total++;
+    if (dht_fail_streak % DHT_REINIT_AFTER == 0) {
+      dht.begin();
+      dht_reinit_count++;
+      Serial.printf("[DHT22] %u fouten op rij -> dht.begin() opnieuw (#%u)\n", (unsigned)dht_fail_streak, (unsigned)dht_reinit_count);
+    }
+  }
+  dew = calculateDewPoint(temp_dht, humi);  // 0 zolang er nog nooit een geldige meting was
   readDS18B20temps();
   light_ldr = scaleLDR(analogRead(LDR_ANALOG));
 
@@ -443,7 +514,8 @@ void readAllSensors() {
     room_temp = temp_dht;
     strncpy(room_source, "DHT22 (fallback)", sizeof(room_source) - 1);
     strncpy(temp_melding, ds_count == 0 ? "Geen DS18B20 gevonden - DHT22 actief (fallback)" : "DS18B20 (kamer) defect - DHT22 actief (fallback)", sizeof(temp_melding) - 1);
-    if (isnan(temp_dht) || temp_dht < SENSOR_TEMP_MIN || temp_dht > SENSOR_TEMP_MAX) {
+    bool dht_fresh = dht_ever_valid && (millis() - dht_last_valid_ms < DHT_FALLBACK_MAX_AGE_MS);
+    if (!dht_fresh || isnan(temp_dht) || temp_dht < SENSOR_TEMP_MIN || temp_dht > SENSOR_TEMP_MAX) {
       room_temp = 0.0;
       room_temp_reliable = false;
       strncpy(room_source, "geen betrouwbare sensor", sizeof(room_source) - 1);
@@ -697,6 +769,41 @@ void buildShellyLabel(int idx, char *out, size_t outsize) {
   strlcpy(out, tmp, outsize);
 }
 
+// ============== v1.4 DIAGNOSE-HELPERS ==============
+const char* resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    default:                return "ANDERS";
+  }
+}
+
+// Rol-sensor als JSON-waarde: "null" als niet toegewezen of defect, anders 1 decimaal
+void dsRoleJson(char* out, size_t n, int idx) {
+  if (idx < 0 || idx >= ds_count || ds_fail_streak[idx] >= DS_FAIL_THRESHOLD) {
+    strlcpy(out, "null", n);
+  } else {
+    snprintf(out, n, "%.1f", temp_ds_arr[idx]);
+  }
+}
+
+// Rol-label voor /advanced
+const char* dsRoleLabel(int i) {
+  if (i == ds_primary) return " (kamer)";
+  if (i == ds_boiler)  return " (boiler)";
+  if (i == ds_cellar)  return " (kelder)";
+  if (i == ds_pump)    return " (ketelpomp)";
+  if (i == ds_return)  return " (retour)";
+  return "";
+}
+
 // ============== GOOGLE SHEETS: POST /json elke 5 min ==============
 void postToGoogleSheets() {
   sheets_last_post = millis();
@@ -707,16 +814,21 @@ void postToGoogleSheets() {
   client.setInsecure();  // Apps Script gebruikt Google's publieke cert; geen pinning nodig voor dit doel
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // Apps Script webhooks doen 302 -> echte URL
+  http.setTimeout(5000);  // v1.4: max 5 s wachten (was standaard, kon de loop lang blokkeren)
+  unsigned long t0 = millis();
   if (!http.begin(client, gas_url)) {
     Serial.println("[Sheets] http.begin() mislukt (ongeldige URL?)");
     sheets_last_code = -1;
+    sheets_fail_total++;
     return;
   }
   http.addHeader("Content-Type", "application/json");
   String payload = getJSON();
   sheets_last_code = http.POST(payload);
   http.end();
-  Serial.printf("[Sheets] POST -> HTTP %d\n", sheets_last_code);
+  sheets_last_ms = millis() - t0;
+  if (sheets_last_code != 200) sheets_fail_total++;
+  Serial.printf("[Sheets] POST -> HTTP %d (%lu ms, %u fouten sinds boot)\n", sheets_last_code, sheets_last_ms, (unsigned)sheets_fail_total);
 }
 // ============== CRASH-LOG (NVS namespace "crash-log") ==============
 void printLastCrashOnBoot() {
@@ -773,8 +885,14 @@ uint32_t getCrashCount() {
 // DS18B20's. Die informatie blijft wel zichtbaar bij het laden van de pagina zelf.
 String getJSON() {
   unsigned long upt = (millis() - boot_millis) / 1000;
-  float t2_j = isnan(temp_dht) ? 0.0f : temp_dht;   // NaN mag niet in JSON -> 0
-  float h_j  = isnan(humi) ? 0.0f : humi;
+  // v1.4: ruwe DHT22-waarden e/f zijn "null" zolang de laatste lezing mislukte (geen 0 meer)
+  char e_s[12], f_s[12];
+  if (dht_ok) { snprintf(e_s, sizeof(e_s), "%.1f", temp_dht); snprintf(f_s, sizeof(f_s), "%.1f", humi); }
+  else { strlcpy(e_s, "null", sizeof(e_s)); strlcpy(f_s, "null", sizeof(f_s)); }
+  char E_s[12], F_s[12], G_s[12];
+  dsRoleJson(E_s, sizeof(E_s), ds_cellar);
+  dsRoleJson(F_s, sizeof(F_s), ds_pump);
+  dsRoleJson(G_s, sizeof(G_s), ds_return);
   bool dew_alert = effective_setpoint > (float)heating_setpoint + 0.01f;  // dauwpuntcorrectie actief?
   bool nacht = light_ldr >= LDR_DARK_THRESHOLD;
   char pon[MAX_PIXELS + 1];
@@ -782,19 +900,22 @@ String getJSON() {
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
   char pixAan[MAX_PIXELS + 3];
   snprintf(pixAan, sizeof(pixAan), "P=%s", pon);  // "P="-prefix: appendRow() in Sheets bewaart zo leidende nullen
-  char buf[440];
+  char buf[640];
   snprintf(buf, sizeof(buf),
     "{\"room\":\"%s\","
-    "\"a\":%lu,\"b\":%d,\"c\":%d,\"d\":%.1f,\"e\":%.1f,\"f\":%.1f,\"g\":%.1f,\"h\":%d,"
+    "\"a\":%lu,\"b\":%d,\"c\":%d,\"d\":%.1f,\"e\":%s,\"f\":%s,\"g\":%.1f,\"h\":%d,"
     "\"i\":%d,\"j\":%d,\"k\":%.1f,"
     "\"l\":%d,\"m\":%d,\"n\":%d,\"o\":%d,\"p\":%d,\"q\":%d,\"r\":\"%s\",\"s\":%d,\"t\":%d,"
-    "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d,\"y\":%.1f}",
+    "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d,\"y\":%.1f,"
+    "\"z\":\"%s\",\"A\":%u,\"B\":%u,\"C\":%u,\"D\":%u,\"E\":%s,\"F\":%s,\"G\":%s}",
     room_id,
-    upt, heating_on ? 1 : 0, heating_setpoint, room_temp, t2_j, h_j, dew, dew_alert ? 1 : 0,
+    upt, heating_on ? 1 : 0, heating_setpoint, room_temp, e_s, f_s, dew, dew_alert ? 1 : 0,
     sww_on ? 1 : 0, boiler_setpoint, temp_boiler,
     light_ldr, nacht ? 1 : 0, bed ? 1 : 0, (int)neo_r, (int)neo_g, (int)neo_b, pixAan, pixel0_mode, mov1_triggers,
     ap_mode_active ? 0 : WiFi.RSSI(), (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024), ds_count,
-    effective_setpoint);  // y: effectieve setpoint (dauwpuntcorrectie) — enkel voor live-UI, bewust niet gelogd naar Sheets
+    effective_setpoint,   // y: effectieve setpoint (dauwpuntcorrectie) — enkel voor live-UI, bewust niet gelogd naar Sheets
+    reset_reason_txt, (unsigned)boot_count, (unsigned)dht_fail_streak, (unsigned)dht_fail_total, (unsigned)sheets_fail_total,
+    E_s, F_s, G_s);       // v1.4: z reset-reden, A boots, B DHT-reeks, C DHT-fouten, D POST-fouten, E/F/G kelder/ketelpomp/retour
   return String(buf);
 }
 
@@ -825,7 +946,7 @@ void loadConfigFromNVS() {
   heating_auto     = preferences.getBool("heat_auto", false);
   relay_manual     = preferences.getBool("relay_man", false);
   heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 5, 30);
-  dew_margin       = preferences.getFloat("dew_margin", 2.0);
+  dew_margin       = constrain(preferences.getFloat("dew_margin", 2.0), -10.0f, 10.0f);
   hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
   LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dark", 40), 0, 100);
   { String t = preferences.getString("gas_url", ""); strlcpy(gas_url, t.c_str(), sizeof(gas_url)); }
@@ -1076,9 +1197,16 @@ void handleStatus(AsyncWebServerRequest *request) {
       effective_setpoint, humTxt);
   }
   p->printf("<tr><td class=\"label\">DHT22 temp</td><td class=\"value\" id=\"v-t2\" colspan=\"2\">%s</td></tr>",
-    isnan(temp_dht) ? "defect (geen sensor?)" : (String(temp_dht, 1) + " &deg;C").c_str());
+    !dht_ever_valid ? "geen meting sinds start" : ((String(temp_dht, 1) + " &deg;C") + (dht_ok ? "" : " (vastgehouden)")).c_str());
   p->printf("<tr><td class=\"label\">DHT22 vocht</td><td class=\"value\" id=\"v-h\" colspan=\"2\">%s</td></tr>",
-    isnan(humi) ? "defect" : (String(humi, 1) + " %").c_str());
+    !dht_ever_valid ? "geen meting sinds start" : ((String(humi, 1) + " %") + (dht_ok ? "" : " (vastgehouden)")).c_str());
+  { char dhtTxt[96];
+    if (dht_ok) strlcpy(dhtTxt, "OK", sizeof(dhtTxt));
+    else if (!dht_ever_valid) snprintf(dhtTxt, sizeof(dhtTxt), "UIT: nog nooit gelezen (%u fouten op rij)", (unsigned)dht_fail_streak);
+    else snprintf(dhtTxt, sizeof(dhtTxt), "UIT: %u fouten op rij, laatste geldige %lu s geleden", (unsigned)dht_fail_streak, (millis() - dht_last_valid_ms) / 1000UL);
+    p->printf("<tr><td class=\"label\">DHT22 status<br><span style=\"font-size:11px;color:#888;\">totaal fouten %u, herinit %u</span></td><td class=\"value\" id=\"v-dhts\" colspan=\"2\" style=\"color:%s;\">%s</td></tr>",
+      (unsigned)dht_fail_total, (unsigned)dht_reinit_count, dht_ok ? "#2a9d2a" : "#c00", dhtTxt);
+  }
   p->printf("<tr><td class=\"label\">Dauwpunt</td><td class=\"value\" id=\"v-dp\" colspan=\"2\">%.1f &deg;C</td></tr>", dew);
   p->printf("<tr><td class=\"label\">Kamertemperatuur<br><span style=\"font-size:11px;color:#888;\">bron: <span id=\"v-rtsrc\">%s</span></span></td><td class=\"value\" id=\"v-rt\" colspan=\"2\">%s</td></tr>",
     room_source, room_temp_reliable ? (String(room_temp, 1) + " &deg;C").c_str() : "n.v.t.");
@@ -1124,7 +1252,7 @@ void handleStatus(AsyncWebServerRequest *request) {
     p->print("<tr><td class=\"label\" colspan=\"3\">Geen sensoren gevonden</td></tr>");
   }
   for (int i = 0; i < ds_count; i++) {
-    const char* role = (i == ds_primary) ? " (kamer)" : (i == ds_boiler) ? " (boiler)" : "";
+    const char* role = dsRoleLabel(i);
     p->printf("<tr><td class=\"label\">%s%s</td><td class=\"value\" colspan=\"2\" id=\"v-dsall-%d\">%s &deg;C%s</td></tr>",
       ds_nicknames[i], role, i, String(temp_ds_arr[i], 1).c_str(), ds_fail_streak[i] >= DS_FAIL_THRESHOLD ? " &mdash; ontbreekt" : "");
   }
@@ -1216,6 +1344,10 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
   p->printf("<tr><td class=\"label\">Grootste blok</td><td class=\"value\" id=\"v-lb\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getMaxAllocHeap()/1024));
   p->printf("<tr><td class=\"label\">Crash-teller</td><td class=\"value\" id=\"v-crash\" colspan=\"2\">%u</td></tr>", (unsigned)getCrashCount());
+  p->printf("<tr><td class=\"label\">Laatste reset-reden</td><td class=\"value\" colspan=\"2\">%s</td></tr>", reset_reason_txt);
+  p->printf("<tr><td class=\"label\">Opstartteller</td><td class=\"value\" colspan=\"2\">%u</td></tr>", (unsigned)boot_count);
+  p->printf("<tr><td class=\"label\">DS18B20 mislukte lezingen</td><td class=\"value\" colspan=\"2\">%u (sinds boot)</td></tr>", (unsigned)ds_fail_total);
+  p->printf("<tr><td class=\"label\">Google-POST fouten</td><td class=\"value\" colspan=\"2\">%u (laatste duur %lu ms)</td></tr>", (unsigned)sheets_fail_total, sheets_last_ms);
   p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", SJALAY_VERSION);
   p->print("</table>");
 
@@ -1243,8 +1375,9 @@ void handleStatus(AsyncWebServerRequest *request) {
         "if(g('v-rssi'))g('v-rssi').textContent=data.u+' dBm';"
         "if(g('v-heap'))g('v-heap').textContent=data.v+' KB';"
         "if(g('v-lb'))g('v-lb').textContent=data.w+' KB';"
-        "if(g('v-t2'))g('v-t2').innerHTML=data.e.toFixed(1)+' &deg;C';"
-        "if(g('v-h'))g('v-h').innerHTML=data.f.toFixed(1)+' %';"
+        "if(g('v-t2'))g('v-t2').innerHTML=(data.e==null)?'n.v.t. (DHT22 uitgevallen)':data.e.toFixed(1)+' &deg;C';"
+        "if(g('v-h'))g('v-h').innerHTML=(data.f==null)?'n.v.t. (DHT22 uitgevallen)':data.f.toFixed(1)+' %';"
+        "if(g('v-dhts')){g('v-dhts').textContent=(data.B===0)?'OK':'UIT: '+data.B+' fouten op rij';g('v-dhts').style.color=(data.B===0)?'#2a9d2a':'#c00';}"
         "if(g('v-dp'))g('v-dp').innerHTML=data.g.toFixed(1)+' &deg;C';"
         "if(g('v-dsc'))g('v-dsc').textContent=data.x+(data.x===0?' (RoomSense niet aangesloten?)':'');"
         "if(g('v-rt'))g('v-rt').innerHTML=data.d.toFixed(1)+' &deg;C';"
@@ -1310,7 +1443,7 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Static IP (leeg = DHCP)</td><td class=\"control\"><input type=\"text\" name=\"ip\" value=\"%s\" maxlength=\"19\"></td></tr>", static_ip_str);
   p->printf("<tr><td class=\"label\">mDNS-naam<br><span style=\"font-size:11px;color:#888;\">enkel a-z/0-9/streepjes, herstart nodig</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"mdns\" value=\"%s\" maxlength=\"31\"> .local</td></tr>", mdns_name);
-  p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)</td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"0\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
+  p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)<br><span style=\"font-size:11px;color:#888;\">negatief toegestaan (-10 t/m 10): dan neem je zelf het vochtrisico</span></td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"-10\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
   p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
   p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
   p->printf("<tr><td class=\"label\">LDR donker-drempel (0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
@@ -1351,6 +1484,18 @@ void handleSettings(AsyncWebServerRequest *request) {
       p->printf("<option value=\"%d\"%s>%s</option>", i, i == ds_boiler ? " selected" : "", ds_nicknames[i]);
     }
     p->print("</select></td></tr>");
+    // v1.4: extra rollen, enkel monitoring/logging (sturen niets)
+    const char* rlabel[3] = {"Kelder", "Ketelpomp (aanvoer)", "Retour"};
+    const char* rname[3]  = {"dscellar", "dspump", "dsreturn"};
+    int rcur[3] = {ds_cellar, ds_pump, ds_return};
+    for (int r = 0; r < 3; r++) {
+      p->printf("<tr><td class=\"label\">%s sensor<br><span style=\"font-size:11px;color:#888;\">enkel meten/loggen</span></td><td class=\"control\"><select name=\"%s\">", rlabel[r], rname[r]);
+      p->printf("<option value=\"-1\"%s>(geen)</option>", rcur[r] < 0 ? " selected" : "");
+      for (int i = 0; i < ds_count; i++) {
+        p->printf("<option value=\"%d\"%s>%s</option>", i, i == rcur[r] ? " selected" : "", ds_nicknames[i]);
+      }
+      p->print("</select></td></tr>");
+    }
   }
   p->print("</table>"
     "<a class=\"btn\" href=\"/rescan_ds\">Herscan DS18B20-bus</a>"
@@ -1395,7 +1540,7 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("dew")) {
     dew_margin = request->getParam("dew")->value().toFloat();
-    dew_margin = constrain(dew_margin, 0.0f, 10.0f);
+    dew_margin = constrain(dew_margin, -10.0f, 10.0f);
     preferences.putFloat("dew_margin", dew_margin);
   }
   if (request->hasParam("hystcv")) {
@@ -1458,6 +1603,17 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     int b = request->getParam("dsboiler")->value().toInt();
     b = (b < 0) ? -1 : constrain(b, 0, ds_count - 1);
     preferences.putInt("ds_boiler", b);
+  }
+  { // v1.4: extra rollen
+    const char* pname[3] = {"dscellar", "dspump", "dsreturn"};
+    const char* nkey3[3] = {"ds_cellar", "ds_pump", "ds_return"};
+    for (int r = 0; r < 3; r++) {
+      if (request->hasParam(pname[r]) && ds_count > 0) {
+        int v = request->getParam(pname[r])->value().toInt();
+        v = (v < 0) ? -1 : constrain(v, 0, ds_count - 1);
+        preferences.putInt(nkey3[r], v);
+      }
+    }
   }
   preferences.end();
   request->send(200, "text/html",
@@ -1662,6 +1818,15 @@ void setup() {
   Serial.println("[RELAIS] Fail-safe: beide relais UIT bij boot.");
 
   printLastCrashOnBoot();
+
+  // v1.4: reset-reden + opstartteller (NVS namespace "diag")
+  strlcpy(reset_reason_txt, resetReasonText(), sizeof(reset_reason_txt));
+  { Preferences diagPrefs;
+    diagPrefs.begin("diag", false);
+    boot_count = diagPrefs.getUInt("boots", 0) + 1;
+    diagPrefs.putUInt("boots", boot_count);
+    diagPrefs.end(); }
+  Serial.printf("[BOOT] Reset-reden: %s, opstart #%u\n", reset_reason_txt, (unsigned)boot_count);
 
   Serial.println("Commando's: 'R' = NVS reset (binnen 5s na boot)");
   Serial.println("Type 'R' binnen 5 sec voor NVS reset...");
