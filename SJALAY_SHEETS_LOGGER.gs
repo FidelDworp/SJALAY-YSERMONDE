@@ -39,6 +39,7 @@ const NUM_COLS = 34;       // A..AH
 const COL_FORMATS = (function () {
   const f = [];
   for (let i = 0; i < NUM_COLS; i++) f.push("General");
+  f[0] = "yyyy-mm-dd hh:mm:ss";                                          // A: tijdstempel (anders toont Sheets een getal)
   [5, 6, 7, 8, 12, 31, 32, 33].forEach(function (i) { f[i] = "0.0"; }); // F,G,H,I,M,AF,AG,AH
   f[10] = "0";                                                           // K: SWW pomp
   return f;
