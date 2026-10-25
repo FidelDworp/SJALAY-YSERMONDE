@@ -216,7 +216,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `room` | Room-naam | Kamer |
 | `a` | Uptime (s) | Uptime (s) |
 | `b` | Ketelvraag | HEAT |
-| `c` | Verwarmings-setpoint (°C) | Set (°C) |
+| `c` | Verwarmings-setpoint (°C), ingesteld met de schuiver | *(niet gelogd)* |
 | `d` | Kamertemperatuur (effectief, 1 dec.) | Temp1 (°C) |
 | `e` | DHT22-temperatuur (rauw, 1 dec.; `null` bij leesfout) | Temp2 (°C) |
 | `f` | Vochtigheid (%) | Vocht (%) |
@@ -235,7 +235,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `u` | Wi-Fi (dBm) | RSSI (dBm) |
 | `v` / `w` | Vrije heap / grootste blok (KB) | Heap vrij / Heap blok |
 | `x` | Aantal DS18B20's | DS count |
-| `y` | Effectief setpoint incl. dauwpuntcorrectie | *(niet gelogd)* |
+| `y` | Effectief setpoint incl. dauwpuntcorrectie (1 dec.) | Set (°C) |
 | `z` | Reset-reden (POWERON, SW, BROWNOUT, …) | Reset |
 | `A` | Opstartteller (NVS) | Boots |
 | `B` | DHT22: opeenvolgende fouten | DHT reeks |
@@ -243,7 +243,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `D` | Mislukte Google-POSTs sinds boot | POST fouten |
 | `E` / `F` / `G` | DS18B20 kelder / ketelpomp / retour (`null` = niet toegewezen of defect) | Kelder / Ketelpomp / Retour (°C) |
 
-**Apps Script (`SJALAY_SHEETS_LOGGER.gs`)**, afgeleid van het Zarlar-roomscript (v1.5): v1.1 logt kolommen A–AH (Tijdstempel + velden hierboven, zonder `y`; ontbrekende waarden als lege cel; temperaturen met 1 decimaal via kolomnotatie), `MAX_ROWS = 50000` (oudste rij verdwijnt bij overschrijding).
+**Apps Script (`SJALAY_SHEETS_LOGGER.gs`)**, afgeleid van het Zarlar-roomscript (v1.5): v1.1 logt kolommen A–AH (Tijdstempel + velden hierboven, met `y` als Set en zonder `c`; ontbrekende waarden als lege cel; temperaturen met 1 decimaal via kolomnotatie), `MAX_ROWS = 50000` (oudste rij verdwijnt bij overschrijding).
 - **Web-app-URL (in Settings, werkend sinds 1/10):** `https://script.google.com/macros/s/AKfycby95iiPEI0Zd7wKGgo_FXL5UD9LWJ4vu3GO_RVnOFa9mlxIM8lr7NjRh6w0aTfXKiT_kg/exec`
 - **Installatie:** Sheet → Extensies → Apps Script → script plakken → `setupHeaders` eenmalig uitvoeren → Implementeren als Web-app (uitvoeren als "Ik", toegang "Iedereen") → URL in Settings → `test()` voor een proefrij
 - **Update naar v1.1:** nieuwe versie van dezelfde implementatie, daarna `setupHeaders()` eenmalig (voegt kolommen AA–AH toe en zet de notatie). Volgorde: eerst script, dan sketch v1.4
