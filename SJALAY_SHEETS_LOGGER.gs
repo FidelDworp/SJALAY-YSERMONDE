@@ -1,11 +1,16 @@
 // ============================================================
-// SJALAY CONTROLLER DATA LOGGER - Google Apps Script v1.0
+// SJALAY CONTROLLER DATA LOGGER - Google Apps Script v1.1
 // Ontvangt JSON-push van de Sjalay-controller (ESP32-C6) en logt
 // naar Google Sheet. Gebaseerd op de ROOM CONTROLLER DATA LOGGER
 // (v1.5) van het Zarlar-roomproject, aangepast aan het compacte
 // Sjalay /json-schema v1.2 (verwarming + SWW i.p.v. enkel 1 circuit).
 //
 // v1.0 (1okt26): eerste versie voor Sjalay, 26 kolommen (A..Z).
+// v1.1 (25okt26): 34 kolommen (A..AH). Nieuw: AA Reset-reden, AB Boots, AC DHT-reeks,
+//                 AD DHT-fouten, AE POST-fouten, AF Kelder, AG Ketelpomp, AH Retour.
+//                 Temperatuur-/vochtkolommen met notatie 0.0, "SWW pomp" als 0/1.
+//                 JSON null -> lege cel (ongeldige meting wordt niet langer 0).
+//                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren.
 //
 // ⚠️  DEPLOYMENT INSTRUCTIE (BELANGRIJK):
 //   Gebruik bij elke update: "Implementeren" → "Implementaties beheren"
@@ -28,6 +33,22 @@ const HEADER_ROWS = 2;     // Rij 1 = titel+URL, Rij 2 = kolomtitels
 // ============================================================
 
 
+const NUM_COLS = 34;       // A..AH
+
+// Getalnotatie per kolom (index 0 = A). 0.0 = 1 decimaal, 0 = geheel getal
+const COL_FORMATS = (function () {
+  const f = [];
+  for (let i = 0; i < NUM_COLS; i++) f.push("General");
+  [5, 6, 7, 8, 12, 31, 32, 33].forEach(function (i) { f[i] = "0.0"; }); // F,G,H,I,M,AF,AG,AH
+  f[10] = "0";                                                           // K: SWW pomp
+  return f;
+})();
+
+// null/undefined (ongeldige meting) -> lege cel; anders de waarde (ook 0 blijft 0)
+function blank(v) {
+  return (v === null || v === undefined) ? "" : v;
+}
+
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
@@ -49,14 +70,14 @@ function doPost(e) {
       data.room || "?",          // C:  Kamer
       data.b    || 0,            // D:  HEAT - ketelvraag (0/1)
       data.c    || 0,            // E:  Set (°C) - verwarmings-setpoint
-      data.d    || 0,            // F:  Temp1 (°C) - kamertemperatuur (effectief gebruikt)
-      data.e    || 0,            // G:  Temp2 (°C) - DHT22 (rauw)
-      data.f    || 0,            // H:  Vocht (%)
-      data.g    || 0,            // I:  Dauwpt (°C)
+      blank(data.d),            // F:  Temp1 (°C) - kamertemperatuur (effectief gebruikt)
+      blank(data.e),            // G:  Temp2 (°C) - DHT22 (rauw)
+      blank(data.f),            // H:  Vocht (%)
+      blank(data.g),            // I:  Dauwpt (°C)
       data.h    || 0,            // J:  Dew Alert (0/1)
-      data.i    || 0,            // K:  SWW pomp (0/1)
+      data.i ? 1 : 0,            // K:  SWW pomp (0/1)
       data.j    || 0,            // L:  SWW Set (°C) - boiler-setpoint
-      data.k    || 0,            // M:  Boiler (°C) - boilertemperatuur
+      blank(data.k),            // M:  Boiler (°C) - boilertemperatuur
       data.l    || 0,            // N:  Licht LDR (0-100)
       data.m    || 0,            // O:  Nacht (0/1) - donker genoeg
       data.n    || 0,            // P:  Bed (0/1)
@@ -70,9 +91,19 @@ function doPost(e) {
       data.v    || 0,            // X:  Heap vrij (KB)
       data.w    || 0,            // Y:  Heap blok (KB)
       data.x    || 0,            // Z:  DS count
+      data.z    || "",           // AA: Reset-reden (tekst, bv. POWERON / BROWNOUT)
+      blank(data.A),             // AB: Boots (herstartteller)
+      blank(data.B),             // AC: DHT-reeks (opeenvolgende mislukte lezingen)
+      blank(data.C),             // AD: DHT-fouten (totaal)
+      blank(data.D),             // AE: POST-fouten (totaal)
+      blank(data.E),             // AF: Kelder (°C), leeg als geen sensor/ongeldig
+      blank(data.F),             // AG: Ketelpomp (°C)
+      blank(data.G),             // AH: Retour (°C)
     ];
 
     sheet.appendRow(row);
+    // Getalnotatie op de zonet toegevoegde rij (1 decimaal voor temperaturen)
+    sheet.getRange(sheet.getLastRow(), 1, 1, NUM_COLS).setNumberFormats([COL_FORMATS]);
 
     // MAX_ROWS bewaking: verwijder oudste datarij als limiet overschreden
     // Rij 1 = titelrij, Rij 2 = kolomtitels, datarijen starten op rij 3
@@ -132,7 +163,7 @@ function setupHeaders() {
   // --- Rij 1: Titelrij met scriptnaam en sheet-URL ---
   sheet.insertRowBefore(1);
   const titleCell = sheet.getRange(1, 1);
-  titleCell.setValue("SJALAY CONTROLLER DATA LOGGER v1.0  |  " + ss.getUrl());
+  titleCell.setValue("SJALAY CONTROLLER DATA LOGGER v1.1  |  " + ss.getUrl());
   titleCell.setFontSize(9);
   titleCell.setFontWeight("normal");
   titleCell.setFontStyle("italic");
@@ -170,6 +201,14 @@ function setupHeaders() {
     "Heap vrij (KB)", // X
     "Heap blok (KB)", // Y
     "DS count",       // Z
+    "Reset",          // AA
+    "Boots",          // AB
+    "DHT reeks",      // AC
+    "DHT fouten",     // AD
+    "POST fouten",    // AE
+    "Kelder (°C)",    // AF
+    "Ketelpomp (°C)", // AG
+    "Retour (°C)",    // AH
   ];
 
   sheet.insertRowBefore(2);
@@ -216,12 +255,28 @@ function setupHeaders() {
   sheet.setColumnWidth(24,  70);  // X: Heap vrij
   sheet.setColumnWidth(25,  70);  // Y: Heap blok
   sheet.setColumnWidth(26,  55);  // Z: DS count
+  sheet.setColumnWidth(27,  80);  // AA: Reset
+  sheet.setColumnWidth(28,  50);  // AB: Boots
+  sheet.setColumnWidth(29,  55);  // AC: DHT reeks
+  sheet.setColumnWidth(30,  55);  // AD: DHT fouten
+  sheet.setColumnWidth(31,  60);  // AE: POST fouten
+  sheet.setColumnWidth(32,  60);  // AF: Kelder
+  sheet.setColumnWidth(33,  65);  // AG: Ketelpomp
+  sheet.setColumnWidth(34,  60);  // AH: Retour
+
+  // Getalnotatie voor alle bestaande datarijen (rij 3 t/m einde)
+  const lastRow = Math.max(sheet.getLastRow(), 3);
+  for (let c = 0; c < NUM_COLS; c++) {
+    if (COL_FORMATS[c] !== "General") {
+      sheet.getRange(3, c + 1, lastRow - 2, 1).setNumberFormat(COL_FORMATS[c]);
+    }
+  }
 
   // 2 rijen bevriezen: rij 1 (titel) + rij 2 (kolomtitels)
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(1);  // Alleen kolom A (Tijdstempel) bevroren
 
-  Logger.log("Headers aangemaakt! " + headers.length + " kolommen (A t/m Z)");
+  Logger.log("Headers aangemaakt! " + headers.length + " kolommen (A t/m AH)");
   Logger.log("Rij 1 = titelrij | Rij 2 = kolomtitels | Data vanaf rij 3");
   Logger.log("MAX_ROWS instelling: " + MAX_ROWS);
 }
@@ -259,7 +314,16 @@ function test() {
         "u": -61,
         "v": 142,
         "w": 38,
-        "x": 2
+        "x": 2,
+        "y": 20.4,
+        "z": "POWERON",
+        "A": 7,
+        "B": 0,
+        "C": 3,
+        "D": 1,
+        "E": 14.2,
+        "F": null,
+        "G": null
       })
     }
   };
