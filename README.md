@@ -181,7 +181,7 @@ Valkuilen: niet `sudo ssh` typen; het commando niet in een SSH-sessie op de Pi u
 | IO15, IO20 | Reserve (IO15 is een strapping-pin) | nee |
 | IO0 | BOOT | nee |
 
-De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in gebruik); die zit thuis in de testroom-controller niet. De controller wordt gevoed met 5,0 V.
+De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in gebruik); die zit thuis in de testroom-controller niet. **Voeding:** VOLTCRAFT USPS-600 (schakelende, instelbare stekkervoeding, uitgang 3/4,5/5/6/7,5/9/12 V DC, **max. 0,6 A / 7,2 VA**), draaiknop op **5 V** gezet (24/10; was 4,5 V), label "5V-ESP32". Aansluiting met een 2-polige SM-connector (rood = +, zwart = −), met een lange, dunne kabel. Op 5 V is dat maximaal 3 W, wat met ESP32-C6 (Wi-Fi-pieken), twee bekrachtigde relais en sensoren krap is: zie het to-do-punt "zwaardere voeding" in B7.
 
 ## B5. De sketch (v1.3)
 
@@ -273,8 +273,14 @@ Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, scrip
 - [ ] CV AAN-kant testen (setpoint boven de kamertemperatuur)
 - [ ] Bedrading afwerken met kabelgootjes; isolatie onderaan de boiler bijwerken
 - [ ] Hysterese-defaults (1,0 °C CV / 5,0 °C SWW) evalueren, met de restwarmte van de brander
+- [ ] **Zwaardere voeding meebrengen voor de controller** (vermoedelijke oorzaak of medeoorzaak van de herstarts en het uitvallen van de DHT22): de huidige VOLTCRAFT USPS-600 levert max. 0,6 A en heeft een lange, dunne kabel (spanningsverlies, uitgang kan wegzakken bij belasting).
+  - **Vaste, geregelde 5 V** (liefst 5,0–5,1 V, geen instelbare), **minstens 2 A, liefst 3 A**
+  - **Korte uitgangskabel** (≤ 0,5 m) met dikke draad (AWG 20–22)
+  - **Connector die op de bestaande past:** 2-polige SM-stekker (rood = +, zwart = −). Controleer de polariteit met de multimeter vóór het aansluiten
+  - Eerst **stroom meten** (multimeter in serie op de + draad, relais 1 en 4 aan) en de spanning op de shield onder belasting (zie de meetpunten hieronder), zodat de voeding goed gedimensioneerd is
+  - Ook meebrengen: een stukje 2-aderige kabel met SM-connector (man en vrouw) voor het geval de bestaande connector vervangen moet worden
 - [ ] **Meten met de mini-scoop:** spanning op de DHT22-pennen (VCC–GND) en op de 3,3 V-pen van de shield terwijl de DHT22 uitgevallen is en tijdens het opstarten/Wi-Fi-zenden; datalijn IO6 tijdens een leescyclus (storing van relais of ketel); 5 V op de shield onder belasting
-- [ ] **Test (ook voor vertrek):** VCC van de 4-relaismodule loskoppelen (relais vallen af, CV/SWW tijdelijk uit), controller kort stroomloos zetten, na 2–3 min `f` in `/json` bekijken. DHT22 blijft werken → oorzaak is de relaismodule (aparte 5 V-voeding of betere voedingsverdeling). Valt hij weg → relaismodule uitsluiten en verder meten. Module daarna weer aansluiten. Mogelijke oorzaken in volgorde: 4-relaismodule, spanningsdip bij Wi-Fi-zending, storing van de ketel op de kabels
+- [ ] **Test (ook voor vertrek):** VCC van de 4-relaismodule loskoppelen (relais vallen af, CV/SWW tijdelijk uit), controller kort stroomloos zetten, na 2–3 min `f` in `/json` bekijken. DHT22 blijft werken → oorzaak is de relaismodule (aparte 5 V-voeding of betere voedingsverdeling). Valt hij weg → relaismodule uitsluiten en verder meten. Module daarna weer aansluiten. Mogelijke oorzaken in volgorde: **onderdimensioneerde voeding** (VOLTCRAFT USPS-600, max. 0,6 A, lange dunne kabel), 4-relaismodule, spanningsdip bij Wi-Fi-zending, storing van de ketel op de kabels
 - [ ] **Materiaal (extra DS18B20's):** 2 waterdichte DS18B20, een verbindingsprintje om ze parallel te schakelen bij de boilersensor, 2 isolatiestrips voor op de buizen, soldeergerief en klein materiaal (krimpkousen, tie-wraps, draad)
 
 **Later**
