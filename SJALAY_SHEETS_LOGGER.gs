@@ -11,6 +11,8 @@
 //                 Temperatuur-/vochtkolommen met notatie 0.0, "SWW pomp" als 0/1.
 //                 JSON null -> lege cel (ongeldige meting wordt niet langer 0).
 //                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren.
+//                 Kolom E "Set (°C)" logt voortaan het EFFECTIEVE setpoint (veld y,
+//                 1 decimaal) i.p.v. het ingestelde setpoint (veld c).
 //
 // ⚠️  DEPLOYMENT INSTRUCTIE (BELANGRIJK):
 //   Gebruik bij elke update: "Implementeren" → "Implementaties beheren"
@@ -39,7 +41,8 @@ const NUM_COLS = 34;       // A..AH
 const COL_FORMATS = (function () {
   const f = [];
   for (let i = 0; i < NUM_COLS; i++) f.push("General");
-  f[0] = "yyyy-mm-dd hh:mm:ss";                                          // A: tijdstempel (anders toont Sheets een getal)
+  f[4] = "0.0";                                                          // E: Set = effectief setpoint
+  f[0] = "yyyy-mm-dd hh:mm:ss";                                         // A: tijdstempel (anders toont Sheets een getal)
   [5, 6, 7, 8, 12, 31, 32, 33].forEach(function (i) { f[i] = "0.0"; }); // F,G,H,I,M,AF,AG,AH
   f[10] = "0";                                                           // K: SWW pomp
   return f;
@@ -70,7 +73,7 @@ function doPost(e) {
       data.a    || 0,            // B:  Uptime (s)
       data.room || "?",          // C:  Kamer
       data.b    || 0,            // D:  HEAT - ketelvraag (0/1)
-      data.c    || 0,            // E:  Set (°C) - verwarmings-setpoint
+      (data.y != null ? data.y : (data.c || 0)),  // E:  Set (°C) - EFFECTIEVE setpoint (incl. dauwpuntcorrectie, 1 dec.); terugval op ingestelde setpoint c
       blank(data.d),            // F:  Temp1 (°C) - kamertemperatuur (effectief gebruikt)
       blank(data.e),            // G:  Temp2 (°C) - DHT22 (rauw)
       blank(data.f),            // H:  Vocht (%)
