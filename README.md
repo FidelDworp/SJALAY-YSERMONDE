@@ -82,6 +82,39 @@ De BM blijft permanent op een normaal comfortschema staan; niemand moet nog aan 
 - Foto's van de klemmenstrook nemen vóór je iets loskoppelt
 - Praktische wintertest van de vorstbeveiliging blijft aangeraden
 
+### 1.6 Terugdraaien naar de oorspronkelijke toestand (instructie voor niet-technici)
+
+Handgeschreven instructie van Filip (25/10/2026), in de ketelkast gestoken bij de gele en blauwe klemmen. Overgenomen zoals geschreven.
+
+**INSTRUCTIES: VERWARMING NAAR OUDE TOESTAND**
+
+**1. In de ketelkast**
+- Zorg dat de **230 V-voeding van de verwarming UIT** staat: grijs bakje op de muur, **rode knop indrukken**.
+- Je ziet in de kast, boven de gekleurde blokjes, een **witte tape** gekleefd met **2 draadjes en een ijzeren brugje**.
+- Neem een kleine **platte (−) schroevendraaier**. Schroef de draadjes in het **gele** en het **blauwe** blokje los. Vervang ze:
+  - in het **gele blokje**: door het **brugje** (of een kortsluitdraadje);
+  - in het **blauwe blokje**: door het **rode en het witte draadje** (de oorspronkelijke voeler). Geen polariteit van belang.
+- Schroef alle **4 schroefjes** weer vast.
+- Doe het deksel weer dicht en schroef het vast met **2 kruisschroeven (+)**.
+- **Zet de stroom van de verwarming weer aan:** groene knop (grijze bakje).
+
+**2. In de living, aan de oude "WOLF"-thermostaat**
+- Druk de **rechtse ronde knop** in. Er komt "WEERGAVE".
+- Draai de knop **3 kliks naar rechts**: "VAKMAN".
+- Druk de knop in: "CODE NR."
+- Draai: "0"; **1 klik rechts**: "1".
+- Druk in: "INSTALLATIE".
+- Draai **1 klik rechts**: "KETEL".
+- Klik in: "HG00".
+- Draai naar rechts tot "**HG24**" verschijnt ("3").
+- Klik in: "3" knippert.
+- Draai naar links tot "**1**".
+- Klik in: "1" wordt gekozen.
+
+→ **Nu moet alles weer als origineel werken.**
+
+**Aanvulling (voor de volledigheid):** de draden van de controller die in het gele en blauwe blokje zitten, zijn twee UTP-paren: **oranje / wit-oranje (OW)** op het gele E1-blokje (verwarmingsrelais) en **blauw / wit-blauw (BuW)** op het blauwe SF-blokje (boilerrelais). Na het terugplaatsen van het brugje en de voeler mogen die losgekoppelde draden met isolatietape afgeplakt worden; de controller hoeft dan niet meer aan te blijven.
+
 ---
 
 ## 2. Netwerk
