@@ -221,7 +221,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `e` | DHT22-temperatuur (rauw, 1 dec.; `null` bij leesfout) | Temp2 (°C) |
 | `f` | Vochtigheid (%) | Vocht (%) |
 | `g` | Dauwpunt (°C) | Dauwpt (°C) |
-| `h` | Dauwpuntcorrectie actief | Dew Alert |
+| `h` | Dauwpuntcorrectie actief: `1` als jouw ingestelde setpoint **lager** is dan dauwpunt + marge. De regeling stookt dan naar die hogere waarde (zie `y`). Dit zegt dus niets over de gemeten kamertemperatuur | Dew Alert |
 | `i` | SWW-pomp | SWW pomp |
 | `j` | Boiler-setpoint (°C) | SWW Set (°C) |
 | `k` | Boilertemperatuur | Boiler (°C) |
