@@ -273,6 +273,16 @@ Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, scrip
 - Alle temperatuurkolommen met 1 decimaal (kolomnotatie `0.0` in `setupHeaders()`); setpoints blijven hele graden; "SWW pomp" als 0/1; in het script `|| 0` vervangen door een `null`-controle
 - **Vijf DS18B20's:** 1 RoomSense (kamer), 2 boiler, 3 kelder, 4 ketelpomp, 5 retourleiding. Alle vijf krijgen een naam in Settings en komen in `/json` en de log. Nieuwe kolommen (kelder, ketelpomp, retour) komen **achteraan** (AF–AH), via dezelfde implementatie. Rollen kelder, ketelpomp en retour worden pas ingesteld zodra de sensoren fysiek op de bus hangen
 
+**Sketch-todo (volgende versie, v1.5)** — nog niet geschreven, wacht op akkoord van Filip
+- [ ] **Google-POST: redirect niet meer volgen.** Aanleiding (25/10): "POST fouten" loopt bij elke POST met 1 op en `/advanced` toont "Laatste resultaat: HTTP 400", terwijl alle rijen wel in de Sheet staan. Oorzaak: Apps Script verwerkt de POST en antwoordt met een doorverwijzing (302). De sketch volgt die (`HTTPC_STRICT_FOLLOW_REDIRECTS`) en stuurt een tweede verzoek naar de doorverwijs-URL, dat met 400 wordt afgewezen. De gegevens zijn dan al gelogd
+  - In `postToGoogleSheets()`: `http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS)`
+  - Succes = HTTP 200 of 302; alle andere codes (time-out `-11`, 4xx, 5xx) blijven een fout en tellen mee in `sheets_fail_total` (JSON `D`)
+  - `/advanced` "Laatste resultaat": 200 en 302 tonen als "OK (HTTP nnn)"; andere codes als "HTTP nnn"
+  - POST-timeout blijft 5 s; nu ook minder blokkeertijd, want het tweede verzoek vervalt
+  - Kopregel + versietabel (B5) + `SJALAY_VERSION` bijwerken; OTA-upload via `/update`
+  - Test: na de update moet "POST fouten" op 0 blijven en "Laatste resultaat" "OK" tonen
+- [ ] *(optioneel, nog te beslissen)* **Aan/uit-schakelaar voor de dauwpuntbeveiliging** in Settings. Bij uit: `effective_setpoint = setpoint`. Aanleiding: ook met marge −5 °C blijft de ondergrens ≈ 9,5 °C bij dauwpunt 14,5 °C; de marge-ondergrens van −10 °C helpt enkel bij een dauwpunt tot ≈ 15 °C
+
 **Stap C — Pi, Tailscale en reservekaart**
 - Reservekaart thuis opnieuw met een ander merkkaartje (Imager met verificatie), daarna opstarttest in de Pi
 - **Tailscale Funnel voor familie** (KISS): `Tailscale Funnel` → **Caddy** op de Pi (poort 8080) → controller `192.168.50.10`. Eén gedeeld familiewachtwoord (basic auth); enkel `/` en de gebruikers-endpoints (`/json`, `/toggle_*`, `/set_*`, `/setcolor`) worden doorgelaten; `/advanced`, `/settings`, `/update`, `/save_settings`, `/factory_reset`, `/reboot`, `/rescan_ds`, `/clear_crash_log`, `/capabilities` worden geblokkeerd (404). Huurders krijgen enkel de lokale URL. Stappen: Caddy installeren, `Caddyfile`, `tailscale funnel --bg 8080`, testen vanaf mobiele data
