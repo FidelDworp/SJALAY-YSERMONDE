@@ -6,7 +6,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.4 (`SJALAY_CONTROLLER_v1.0.ino`, bestandsnaam is historisch) |
+| **Sketch** | v1.5 (`SJALAY_CONTROLLER_v1.5.ino`; map en bestand moeten dezelfde naam hebben) |
 | **Apps Script** | v1.1 (`SJALAY_SHEETS_LOGGER.gs`) |
 | **Laatst bijgewerkt** | 28 oktober 2026 |
 
@@ -181,7 +181,7 @@ Valkuilen: niet `sudo ssh` typen; het commando niet in een SSH-sessie op de Pi u
 | IO13 / IO11 | I2C SDA / SCL | nee |
 | IO12 / IO7 | Sharp dust LED / analoog | nee |
 | IO18 | CO2 PWM (MH-Z19, 5 V) | nee |
-| IO19 | MOV2 | nee |
+| **IO19** | **relais 3 → 3,3 V-voeding van de DHT22** (NC-contact, fail-safe: onbekrachtigd = DHT22 gevoed; was MOV2) | ja (v1.5) |
 | IO15, IO20 | Reserve (IO15 is een strapping-pin) | nee |
 | IO0 | BOOT | nee |
 
@@ -189,21 +189,23 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.4)
+## B5. De sketch (v1.5)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
 - **Board:** ESP32C6 Dev Module, **Flash Size 16 MB**, Partition Custom (`partitions.csv`), USB CDC On Boot Enabled. `#define Serial Serial0` bovenaan is verplicht op de C6. Versie in `SJALAY_VERSION` (onderaan `/advanced`)
 - **OTA-bestand maken (Arduino IDE 2.x):** Sketch → Export Compiled Binary, daarna enkel `SJALAY_CONTROLLER_v….ino.bin` uit de map `build/esp32.esp32.esp32c6/` uploaden via `/update`. **Niet** `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Staat Flash Size per ongeluk op 4M (zichtbaar in de compile-uitvoer als `FlashSize=4M`), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren. "Not connected" in de IDE bij het exporteren is normaal
 - **Pagina's:** `/` (landingspagina, zie A3), `/advanced` (technisch, live-refresh 3 s), `/settings`, `/update` (OTA), `/json` (live data)
-- **Endpoints:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=` (5–30 °C), `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=` (10–60 °C), `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`, beheer: `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`
-- **Settings:** room-naam, Wi-Fi, static IP, mDNS-naam (a-z, 0-9, `-`), dauwpuntmarge (−10 t/m +10 °C; negatief = je neemt het vochtrisico zelf), hysterese CV/SWW, LDR-drempel, aantal pixels, Google Script-URL, Sheets-interval (1–60 min, default 5), pixel-namen en Shelly-koppeling (`ip:nickname`, max 3), DS18B20-nicknames, primaire sensor (kamer), boilersensor en de rollen kelder, ketelpomp en retour (alleen meten/loggen)
-- **Verwarming (relais 1):** Auto: `effective_setpoint = max(setpoint, dauwpunt + marge)` met symmetrische hysterese (default 1,0 °C). Geforceerd UIT bij kamer ≥ 30 °C en bij onbetrouwbare temperatuurdata. Het getal tussen haakjes naast de grote temperatuur op de landingspagina is het effectieve setpoint (`y`). Voorbeeld: setpoint 5 °C, dauwpunt 14,5 °C, marge −5 → effectief 9,5 °C (ondergrens, ook als de schuiver op 5 staat)
+- **Endpoints:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=` (5–30 °C), `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=` (10–60 °C), `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`, beheer: `/dht_reset` (DHT22 power cycle), `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`
+- **Settings:** room-naam, Wi-Fi, static IP, mDNS-naam (a-z, 0-9, `-`), dauwpuntmarge (−10 t/m +10 °C; negatief = je neemt het vochtrisico zelf), **dauwpuntbeveiliging aan/uit** (v1.5, standaard aan), hysterese CV/SWW, LDR-drempel, aantal pixels, Google Script-URL, Sheets-interval (1–60 min, default 5), pixel-namen en Shelly-koppeling (`ip:nickname`, max 3), DS18B20-nicknames, primaire sensor (kamer), boilersensor en de rollen kelder, ketelpomp en retour (alleen meten/loggen)
+- **Verwarming (relais 1):** Auto: `effective_setpoint = max(setpoint, dauwpunt + marge)` (met dauwpuntbeveiliging uit: `= setpoint`) en symmetrische hysterese (default 1,0 °C). Geforceerd UIT bij kamer ≥ 30 °C en bij onbetrouwbare temperatuurdata. Het getal tussen haakjes naast de grote temperatuur op de landingspagina is het effectieve setpoint (`y`). Voorbeeld: setpoint 5 °C, dauwpunt 14,5 °C, marge −5 → effectief 9,5 °C (ondergrens, ook als de schuiver op 5 staat)
 - **SWW (relais 2):** setpoint 10–60 °C (default 40), hysterese default 5,0 °C. Geforceerd UIT bij boiler ≥ 60 °C of bij een defecte boilersensor
 - **Sensoren:** elke DS18B20 heeft een uniek ROM-adres. Kamer: primaire DS18B20 → terugval DHT22 → beide defect = relais 1 UIT. Een sensor geldt pas als ontbrekend na 3 mislukte lezingen. Kelder, ketelpomp en retour sturen niets: ze worden enkel getoond en gelogd (max. 6 DS18B20's). **DHT22 (v1.4):** bij uitval blijft de laatste geldige waarde gelden voor vocht en dauwpunt (zolang er sinds de start minstens één geldige meting was); na 5 mislukte lezingen opnieuw `dht.begin()`; als kamer-terugval enkel als de laatste geldige meting jonger is dan 5 min. `/advanced` toont reset-reden, opstartteller, DHT22-status en foutentellers, DS18B20- en POST-fouten
 - **Verlichting:** pixel 0 = bed-modus (altijd uit), AUTO (aan bij beweging + donker) of MANUEEL; pixels 1+ altijd manueel. Elke pixel schakelt 0–3 Shelly-stopcontacten mee (`http://<ip>/relay/0?turn=on|off`)
 - **Landingspagina:** bij elke load worden beide regelkringen naar Auto gezet
-- **Google Sheets:** HTTPS POST van de `/json`-payload op het ingestelde interval, timeout 5 s
+- **Google Sheets:** HTTPS POST van de `/json`-payload op het ingestelde interval, timeout 5 s. Sinds v1.5 wordt de 302-doorverwijzing niet meer gevolgd; HTTP 200, 302 en 303 gelden als geslaagd (`/advanced`: "OK (HTTP nnn)"), alles anders telt als fout
+- **Broodkruimel (v1.5):** de sketch bewaart in RTC-geheugen de laatste fase (`IDLE`, `WIFI`, `PIR`, `PIX`, `SHELLY`, `DHT`, `DS`, `HEAT`, `SWW`, `POST`, `CRASH`, `OTA`, `SET`, `DHTPW`). Na een herstart door `INT_WDT`, `TASK_WDT`, `WDT` of `PANIC` staat die in de reset-reden, bv. `INT_WDT@POST` (`/advanced` en kolom Reset). `@IDLE` = het gebeurde buiten de loop (webserver- of Wi-Fi-taak)
+- **DHT22 power cycle (v1.5, relais 3 op IO19):** hardware: NC-contact van relais 3 in serie met de 3,3 V-voeding van de DHT22 (aan de kant van de shield). Trigger: 6 mislukte lezingen op rij (`dht.begin()` na 5 blijft). Procedure: voeding 5 s uit (datapin IO6 dan als uitgang laag, anders houdt de pull-up de sensor via zijn beschermdiode half gevoed), voeding aan + `dht.begin()`, 3 s opwarmen, controle met 3 lezingen om de 5 s. Mislukt: de eerste 3 pogingen minstens 5 min uit elkaar, daarna max. 1 per uur; bij succes begint de teller opnieuw. Tijdens uit en opwarmen wordt de DHT22 niet gelezen en blijven de tellers staan; vocht en dauwpunt houden de laatste geldige waarde. `/advanced`: aantal power cycles, toestand, tijd sinds de laatste poging en de knop "DHT22 nu resetten" (`/dht_reset`). Niet in de Sheet
 
 | Versie | Inhoud |
 |---|---|
@@ -213,6 +215,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.5 (28/10) | POST: redirect niet meer volgen (200/302/303 = OK); broodkruimel voor `INT_WDT`/`PANIC`; dauwpuntbeveiliging aan/uit; DHT22 power cycle via relais 3 (IO19). Apps Script blijft v1.1 |
 
 ## B6. JSON (`/json`) en Google Apps Script
 
@@ -243,7 +246,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `v` / `w` | Vrije heap / grootste blok (KB) | Heap vrij / Heap blok |
 | `x` | Aantal DS18B20's | DS count |
 | `y` | Effectief setpoint incl. dauwpuntcorrectie (1 dec.) | Set (°C) |
-| `z` | Reset-reden (POWERON, SW, INT_WDT, BROWNOUT, …) | Reset |
+| `z` | Reset-reden (POWERON, SW, INT_WDT, BROWNOUT, …); sinds v1.5 bij watchdog/panic met fase, bv. `INT_WDT@POST` | Reset |
 | `A` | Opstartteller (NVS) | Boots |
 | `B` | DHT22: opeenvolgende fouten | DHT reeks |
 | `C` | DHT22: totaal fouten sinds boot | DHT fouten |
@@ -283,16 +286,17 @@ Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, scrip
 - Alle temperatuurkolommen met 1 decimaal; kolom Set toont het effectieve setpoint; tijdstempel met notatie `yyyy-mm-dd hh:mm:ss` ✔
 - **Vijf DS18B20's:** 1 RoomSense (kamer), 2 boiler, 3 kelder, 4 ketelpomp, 5 retourleiding. Kelder is toegewezen (15,5 °C → 11,9 °C). Ketelpomp en retour blijven leeg tot de sensoren fysiek op de bus hangen (zie materiaal bij "Op locatie")
 
-**Sketch-todo (volgende versie, v1.5)** — nog niet geschreven, wacht op akkoord van Filip (OTA van thuis is mogelijk)
-- [ ] **Google-POST: redirect niet meer volgen.** Aanleiding (25/10): "POST fouten" loopt bij elke POST met 1 op en `/advanced` toont "Laatste resultaat: HTTP 400", terwijl alle rijen wel in de Sheet staan. Oorzaak: Apps Script verwerkt de POST en antwoordt met een doorverwijzing (302). De sketch volgt die (`HTTPC_STRICT_FOLLOW_REDIRECTS`) en stuurt een tweede verzoek naar de doorverwijs-URL, dat met 400 wordt afgewezen. De gegevens zijn dan al gelogd
+**Sketch v1.5 — geschreven 28/10, nog te testen (OTA van thuis)**
+Installatie: `SJALAY_CONTROLLER_v1.5.ino` in de map `SJALAY_CONTROLLER_v1.5`, compileren met Flash Size 16 MB en Partition Custom, `.ino.bin` exporteren en uploaden via `/update`. Daarna controleren: Firmware v1.5, "Laatste resultaat" = OK (HTTP 302), POST fouten blijft 0, relais 3 bedraad voor de DHT22-reset. Hardware: relais 3 (IO19) op de 4-relaismodule bedraden, NC-contact in de 3,3 V-lijn van de DHT22. De punten hieronder zijn uitgevoerd, behalve wat "nog te beslissen" is.
+- [x] **Google-POST: redirect niet meer volgen.** Aanleiding (25/10): "POST fouten" loopt bij elke POST met 1 op en `/advanced` toont "Laatste resultaat: HTTP 400", terwijl alle rijen wel in de Sheet staan. Oorzaak: Apps Script verwerkt de POST en antwoordt met een doorverwijzing (302). De sketch volgt die (`HTTPC_STRICT_FOLLOW_REDIRECTS`) en stuurt een tweede verzoek naar de doorverwijs-URL, dat met 400 wordt afgewezen. De gegevens zijn dan al gelogd
   - In `postToGoogleSheets()`: `http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS)`
   - Succes = HTTP 200 of 302; alle andere codes (time-out `-11`, 4xx, 5xx) blijven een fout en tellen mee in `sheets_fail_total` (JSON `D`)
   - `/advanced` "Laatste resultaat": 200 en 302 tonen als "OK (HTTP nnn)"; andere codes als "HTTP nnn"
   - POST-timeout blijft 5 s; nu ook minder blokkeertijd, want het tweede verzoek vervalt
   - Test: na de update moet "POST fouten" op 0 blijven en "Laatste resultaat" "OK" tonen
-- [ ] **`INT_WDT`-broodkruimel.** Aanleiding (28/10): twee `INT_WDT`-herstarts zonder zichtbare oorzaak. Voorstel: de sketch bewaart in het RTC-geheugen (`RTC_NOINIT_ATTR`) welke functie als laatste draaide (bv. sensoren lezen, DHT, DS18B20, POST, OTA, Settings opslaan, webverzoek). Na een `INT_WDT`-herstart staat die tag in de log (extra kolom of in de Reset-kolom), zodat we zien waar het vastliep
-- [ ] *(optioneel, nog te beslissen)* **Aan/uit-schakelaar voor de dauwpuntbeveiliging** in Settings. Bij uit: `effective_setpoint = setpoint`. Aanleiding: ook met marge −5 °C blijft de ondergrens ≈ 9,5 °C bij dauwpunt 14,5 °C; de marge-ondergrens van −10 °C helpt enkel bij een dauwpunt tot ≈ 15 °C
-- [ ] *(nog te beslissen, na het meten)* DHT22 van een schakelbare voeding voorzien (GPIO via transistor of vrij relais) zodat de sensor zichzelf kan resetten. Tijdelijke noodoplossing: de voeding van de RoomSense-box via een vrij relais laten lopen
+- [x] **`INT_WDT`-broodkruimel.** Aanleiding (28/10): twee `INT_WDT`-herstarts zonder zichtbare oorzaak. Voorstel: de sketch bewaart in het RTC-geheugen (`RTC_NOINIT_ATTR`) welke functie als laatste draaide (bv. sensoren lezen, DHT, DS18B20, POST, OTA, Settings opslaan, webverzoek). Na een `INT_WDT`-herstart staat die tag in de log (extra kolom of in de Reset-kolom), zodat we zien waar het vastliep
+- [x] **Aan/uit-schakelaar voor de dauwpuntbeveiliging** in Settings. Bij uit: `effective_setpoint = setpoint`. Aanleiding: ook met marge −5 °C blijft de ondergrens ≈ 9,5 °C bij dauwpunt 14,5 °C; de marge-ondergrens van −10 °C helpt enkel bij een dauwpunt tot ≈ 15 °C
+- [x] DHT22 van een schakelbare voeding voorzien: relais 3 op IO19 (zie B5). Niet in de Sheet. Dit is een noodoplossing en geen oorzaak: het meetplan met de mini-scoop blijft nodig
 - Bij elke sketchwijziging: kopregel, versietabel (B5), `SJALAY_VERSION`, README en OTA-upload via `/update`
 
 **Stap C — Pi, Tailscale en reservekaart**
