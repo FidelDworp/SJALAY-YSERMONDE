@@ -6,7 +6,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.6 (`SJALAY_CONTROLLER_v1.6.ino`; map en bestand moeten dezelfde naam hebben) |
+| **Sketch** | v1.7 (`SJALAY_CONTROLLER_v1.7.ino`; map en bestand moeten dezelfde naam hebben) |
 | **Apps Script** | v1.1 (`SJALAY_SHEETS_LOGGER.gs`) |
 | **Laatst bijgewerkt** | 28 oktober 2026 |
 
@@ -191,7 +191,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.6)
+## B5. De sketch (v1.7)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -203,6 +203,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 - **Verwarming (relais 1):** Auto: `effective_setpoint = max(setpoint, dauwpunt + marge)` (met dauwpuntbeveiliging uit: `= setpoint`) en symmetrische hysterese (default 1,0 °C). Geforceerd UIT bij kamer ≥ 30 °C en bij onbetrouwbare temperatuurdata. Het getal tussen haakjes naast de grote temperatuur op de landingspagina is het effectieve setpoint (`y`). Voorbeeld: setpoint 5 °C, dauwpunt 14,5 °C, marge −5 → effectief 9,5 °C (ondergrens, ook als de schuiver op 5 staat)
 - **SWW (relais 2):** setpoint 10–60 °C (default 40), hysterese default 5,0 °C. Geforceerd UIT bij boiler ≥ 60 °C of bij een defecte boilersensor
 - **Sensoren:** elke DS18B20 heeft een uniek ROM-adres. Kamer: primaire DS18B20 → terugval DHT22 → beide defect = relais 1 UIT. Een sensor geldt pas als ontbrekend na 3 mislukte lezingen. Kelder, ketelpomp en retour sturen niets: ze worden enkel getoond en gelogd (max. 6 DS18B20's). **DHT22 (v1.4):** bij uitval blijft de laatste geldige waarde gelden voor vocht en dauwpunt (zolang er sinds de start minstens één geldige meting was); na 5 mislukte lezingen opnieuw `dht.begin()`; als kamer-terugval enkel als de laatste geldige meting jonger is dan 5 min. `/advanced` toont reset-reden, opstartteller, DHT22-status en foutentellers, DS18B20- en POST-fouten
+- **LDR (v1.7):** schaal 0 = donker, 100 = fel. Donker als `light_ldr < drempel` (Settings: "donker onder deze waarde", standaard 60). In de Sheet bevat kolom Licht LDR vóór 28/10 (v1.7) de oude schaal (100 = donker): de grafiek heeft daar een breuk. Roomcontrollers (Zarlar) hebben nog de oude schaal; aanpassing volgt als Filip hun code doorgeeft
 - **Verlichting:** pixel 0 = bed-modus (altijd uit), AUTO (aan bij beweging + donker) of MANUEEL; pixels 1+ altijd manueel. Elke pixel schakelt 0–3 Shelly-stopcontacten mee (`http://<ip>/relay/0?turn=on|off`)
 - **Landingspagina:** bij elke load worden beide regelkringen naar Auto gezet
 - **Google Sheets:** HTTPS POST van de `/json`-payload op het ingestelde interval, timeout 5 s. Sinds v1.5 wordt de 302-doorverwijzing niet meer gevolgd; HTTP 200, 302 en 303 gelden als geslaagd (`/advanced`: "OK (HTTP nnn)"), alles anders telt als fout
@@ -217,6 +218,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.7 (28/10) | LDR-schaal omgekeerd: 0 = donker, 100 = fel (`/advanced`, JSON `l`, Sheet). Donkertest `light_ldr < drempel` (pixel 0 AUTO en nacht, nu beide strikt kleiner dan). Drempel in Settings = "donker onder deze waarde", standaard 60; nieuwe NVS-sleutel `ldr_dk2`, een oude drempel (`ldr_dark`) wordt omgerekend naar 100 − oud. Apps Script blijft v1.1. Sheet-rijen vóór v1.7 staan nog op de oude schaal (breuk in de grafiek) |
 | v1.6 (28/10) | Relais 3 schakelt de hele sensor-3V3-rail (PCB-snede, zie B4): tijdens de power cycle worden de DS18B20's en de LDR niet gelezen (laatste waarden blijven, geen faalteller, verwarming niet geblokkeerd); de eerste DS-lezing erna negeert de power-on-waarde 85,0 °C. Verder ongewijzigd |
 | v1.5 (28/10) | POST: redirect niet meer volgen (200/302/303 = OK); broodkruimel voor `INT_WDT`/`PANIC`; dauwpuntbeveiliging aan/uit; DHT22 power cycle via relais 3 (IO19). Apps Script blijft v1.1 |
 
@@ -238,7 +240,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `i` | SWW-pomp | SWW pomp |
 | `j` | Boiler-setpoint (°C) | SWW Set (°C) |
 | `k` | Boilertemperatuur | Boiler (°C) |
-| `l` | LDR (0–100, 100 = donker) | Licht LDR |
+| `l` | LDR (0–100, **0 = donker, 100 = fel** sinds v1.7; daarvoor 100 = donker) | Licht LDR |
 | `m` | Nacht | Nacht |
 | `n` | Bed-modus | Bed |
 | `o`/`p`/`q` | RGB-kleur | R / G / B |
@@ -289,8 +291,8 @@ Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, scrip
 - Alle temperatuurkolommen met 1 decimaal; kolom Set toont het effectieve setpoint; tijdstempel met notatie `yyyy-mm-dd hh:mm:ss` ✔
 - **Vijf DS18B20's:** 1 RoomSense (kamer), 2 boiler, 3 kelder, 4 ketelpomp, 5 retourleiding. Kelder is toegewezen (15,5 °C → 11,9 °C). Ketelpomp en retour blijven leeg tot de sensoren fysiek op de bus hangen (zie materiaal bij "Op locatie")
 
-**Sketch v1.6 — geschreven 28/10, nog te testen (OTA van thuis)**
-v1.5 draait en is getest (Firmware v1.5, "Laatste resultaat" OK (HTTP 302), POST fouten 0, Settings-veld aanwezig). v1.6 is de aanpassing voor de gedeelde sensorrail; hij heeft pas zin zodra de PCB-snede en relais 3 bedraad zijn, maar is veilig ook zonder (relais 3 is dan niet aangesloten). Installatie: `SJALAY_CONTROLLER_v1.6.ino` in de map `SJALAY_CONTROLLER_v1.6`, compileren met Flash Size 16 MB en Partition Custom, `.ino.bin` exporteren en uploaden via `/update`. Daarna controleren: Firmware v1.6, "Laatste resultaat" = OK (HTTP 302), POST fouten blijft 0, relais 3 bedraad voor de DHT22-reset. Hardware: relais 3 (IO19) op de 4-relaismodule bedraden, NC-contact in de 3,3 V-lijn van de DHT22. De punten hieronder zijn uitgevoerd, behalve wat "nog te beslissen" is.
+**Sketch v1.7 (LDR-schaal) en v1.6 (sensorrail) — geschreven 28/10, nog te testen (OTA van thuis)**
+v1.5 draait en is getest (Firmware v1.5, "Laatste resultaat" OK (HTTP 302), POST fouten 0, Settings-veld aanwezig). v1.6 is de aanpassing voor de gedeelde sensorrail; hij heeft pas zin zodra de PCB-snede en relais 3 bedraad zijn, maar is veilig ook zonder (relais 3 is dan niet aangesloten). Installatie: `SJALAY_CONTROLLER_v1.7.ino` in de map `SJALAY_CONTROLLER_v1.7`, compileren met Flash Size 16 MB en Partition Custom, `.ino.bin` exporteren en uploaden via `/update`. Daarna controleren: Firmware v1.7, Licht in `/advanced` met "donker=0" (hand voor de LDR → waarde daalt), drempel in Settings = 60 (was 40), nachtregeling gedraagt zich als voorheen, "Laatste resultaat" = OK (HTTP 302), POST fouten blijft 0, relais 3 bedraad voor de DHT22-reset. Hardware: relais 3 (IO19) op de 4-relaismodule bedraden, NC-contact in de 3,3 V-lijn van de DHT22. De punten hieronder zijn uitgevoerd, behalve wat "nog te beslissen" is.
 - [x] **Google-POST: redirect niet meer volgen.** Aanleiding (25/10): "POST fouten" loopt bij elke POST met 1 op en `/advanced` toont "Laatste resultaat: HTTP 400", terwijl alle rijen wel in de Sheet staan. Oorzaak: Apps Script verwerkt de POST en antwoordt met een doorverwijzing (302). De sketch volgt die (`HTTPC_STRICT_FOLLOW_REDIRECTS`) en stuurt een tweede verzoek naar de doorverwijs-URL, dat met 400 wordt afgewezen. De gegevens zijn dan al gelogd
   - In `postToGoogleSheets()`: `http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS)`
   - Succes = HTTP 200 of 302; alle andere codes (time-out `-11`, 4xx, 5xx) blijven een fout en tellen mee in `sheets_fail_total` (JSON `D`)
