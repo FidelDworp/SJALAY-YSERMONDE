@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.6 — 28 okt 2026
+// SJALAY CONTROLLER — v1.7 — 28 okt 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -106,6 +106,17 @@
 //                  cycle eveneens vastgehouden.
 //                - Verder ongewijzigd t.o.v. v1.5 (JSON, Sheet, Apps Script v1.1).
 // ----------------------------------------------------------------------------
+// v1.7 (28okt26): - LDR-schaal omgekeerd: 0 = donker, 100 = fel (was 100 = donker). Geldt voor
+//                  /advanced, /json (sleutel l) en dus de Google Sheet (kolom Licht LDR);
+//                  Apps Script blijft v1.1. Bestaande Sheet-rijen blijven op de oude schaal
+//                  (breuk in de grafiek).
+//                - Donkertest: light_ldr < drempel (pixel 0 AUTO) en nacht = light_ldr <
+//                  drempel (nu allebei strikt kleiner dan; voorheen > en >=).
+//                - Drempel in Settings: "donker onder deze waarde", standaard 60 (was 40 op
+//                  de oude schaal). Nieuwe NVS-sleutel "ldr_dk2"; bij de eerste start wordt
+//                  een bestaande oude drempel (sleutel "ldr_dark") eenmalig omgerekend naar
+//                  100 - oud, zodat de nachtregeling hetzelfde blijft gedragen.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -127,7 +138,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.6"
+#define SJALAY_VERSION "1.7"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -288,7 +299,7 @@ bool pixel0_manual_on = false;      // gewenste pixel 0-staat in MANUEEL-modus
 bool pixel_on[MAX_PIXELS] = {false};
 int light_on_min = 0;               // licht-aan tijd na PIR-trigger (0-30 min)
 bool bed = false;                   // bed-modus: dwingt pixel 0 uit
-int LDR_DARK_THRESHOLD = 40;
+int LDR_DARK_THRESHOLD = 60;   // v1.7: donker als light_ldr < drempel (0 = donker, 100 = fel)
 unsigned long mov1_off_time = 0;
 inline unsigned long lightOnDuration() { return (unsigned long)light_on_min * 60000UL + 5000UL; }
 
@@ -416,7 +427,7 @@ float calculateDewPoint(float t, float h) {
   return isnan(t) || isnan(h) ? 0 : t - ((100 - h) / 5.0);
 }
 
-int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 100, 0); }
+int scaleLDR(int r) { return map(constrain(r, 100, 3800), 100, 3800, 0, 100); }   // v1.7: 0 = donker, 100 = fel
 
 void pushEvent(unsigned long *buf, int size) {
   for (int i = size - 1; i > 0; i--) buf[i] = buf[i - 1];
@@ -848,7 +859,7 @@ void updatePixelLogic() {
         setTargetColor(0, on ? neo_r : 0, on ? neo_g : 0, on ? neo_b : 0);
         pixel_on[0] = on;
       } else {
-        bool dark = (light_ldr > LDR_DARK_THRESHOLD);
+        bool dark = (light_ldr < LDR_DARK_THRESHOLD);
         bool movement = (millis() < mov1_off_time);
         bool on = dark && movement;
         setTargetColor(0, on ? neo_r : 0, on ? neo_g : 0, on ? neo_b : 0);
@@ -1052,7 +1063,7 @@ String getJSON() {
   dsRoleJson(F_s, sizeof(F_s), ds_pump);
   dsRoleJson(G_s, sizeof(G_s), ds_return);
   bool dew_alert = effective_setpoint > (float)heating_setpoint + 0.01f;  // dauwpuntcorrectie actief?
-  bool nacht = light_ldr >= LDR_DARK_THRESHOLD;
+  bool nacht = light_ldr < LDR_DARK_THRESHOLD;
   char pon[MAX_PIXELS + 1];
   for (int i = 0; i < pixels_num && i < MAX_PIXELS; i++) pon[i] = pixel_on[i] ? '1' : '0';
   pon[pixels_num < MAX_PIXELS ? pixels_num : MAX_PIXELS] = '\0';
@@ -1107,7 +1118,10 @@ void loadConfigFromNVS() {
   dew_margin       = constrain(preferences.getFloat("dew_margin", 2.0), -10.0f, 10.0f);
   dew_enabled      = preferences.getBool("dew_en", true);   // v1.5
   hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
-  LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dark", 40), 0, 100);
+  // v1.7: nieuwe schaal (0 = donker). Oude sleutel "ldr_dark" (100 = donker) eenmalig omrekenen.
+  if (preferences.isKey("ldr_dk2"))        LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dk2", 60), 0, 100);
+  else if (preferences.isKey("ldr_dark"))  LDR_DARK_THRESHOLD = constrain(100 - preferences.getInt("ldr_dark", 40), 0, 100);
+  else                                     LDR_DARK_THRESHOLD = 60;
   { String t = preferences.getString("gas_url", ""); strlcpy(gas_url, t.c_str(), sizeof(gas_url)); }
   sheets_interval_min = constrain(preferences.getInt("sheets_min", 5), 1, 60);
 
@@ -1429,7 +1443,7 @@ void handleStatus(AsyncWebServerRequest *request) {
 
   char hexcol[8]; snprintf(hexcol, sizeof(hexcol), "#%02x%02x%02x", neo_r, neo_g, neo_b);
   p->print("<div class=\"group-title\">Verlichting</div><table>");
-  p->printf("<tr><td class=\"label\">OMGEVINGSLICHT (donker=100)</td><td class=\"value\" id=\"v-ldr\" colspan=\"2\">%d</td></tr>", light_ldr);
+  p->printf("<tr><td class=\"label\">OMGEVINGSLICHT (donker=0)</td><td class=\"value\" id=\"v-ldr\" colspan=\"2\">%d</td></tr>", light_ldr);
   p->printf("<tr><td class=\"label\">Bed-modus<br><span style=\"font-size:11px;color:#888;\">dwingt pixel 0 uit</span></td>"
     "<td class=\"value\" id=\"v-bed\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_bed\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
@@ -1621,7 +1635,7 @@ void handleSettings(AsyncWebServerRequest *request) {
     dew_enabled ? " selected" : "", dew_enabled ? "" : " selected");
   p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
   p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
-  p->printf("<tr><td class=\"label\">LDR donker-drempel (0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
+  p->printf("<tr><td class=\"label\">LDR donker-drempel (donker onder deze waarde, 0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
   p->printf("<tr><td class=\"label\">Aantal pixels (1-30, herstart nodig)</td><td class=\"control\"><input type=\"number\" name=\"pnum\" min=\"1\" max=\"30\" value=\"%d\" style=\"width:60px;\"></td></tr>", pixels_num);
   p->printf("<tr><td class=\"label\">Google Script URL<br><span style=\"font-size:11px;color:#888;\">leeg = logging uit</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"gas\" value=\"%s\" maxlength=\"199\" style=\"width:95%%;\"></td></tr>", gas_url);
@@ -1733,7 +1747,7 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
   }
   if (request->hasParam("ldrdark")) {
     LDR_DARK_THRESHOLD = constrain(request->getParam("ldrdark")->value().toInt(), 0, 100);
-    preferences.putInt("ldr_dark", LDR_DARK_THRESHOLD);
+    preferences.putInt("ldr_dk2", LDR_DARK_THRESHOLD);   // v1.7
   }
   if (request->hasParam("gas")) {
     String v = request->getParam("gas")->value();
