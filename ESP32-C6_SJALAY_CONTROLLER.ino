@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.4 — 25 okt 2026
+// SJALAY CONTROLLER — v1.6 — 28 okt 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -74,6 +74,38 @@
 //                  setpoint = max(setpoint, dauwpunt + marge); met een negatieve marge
 //                  grijpt de dauwpuntcorrectie pas later of niet in (vochtrisico voor eigen rekening).
 // ----------------------------------------------------------------------------
+// v1.5 (28okt26): - Google-POST volgt de 302-doorverwijzing van Apps Script niet meer
+//                  (het tweede verzoek gaf steeds HTTP 400 en telde als fout, terwijl de
+//                  gegevens al gelogd waren). HTTP 200, 302 en 303 gelden als geslaagd;
+//                  alles anders (time-out -11, 4xx, 5xx) blijft een fout. /advanced toont
+//                  dan "OK (HTTP nnn)".
+//                - INT_WDT-broodkruimel: de sketch bewaart in RTC-geheugen (RTC_NOINIT)
+//                  welke fase als laatste draaide (IDLE, WIFI, PIR, PIX, SHELLY, DHT, DS,
+//                  HEAT, SWW, POST, CRASH, OTA, SET, DHTPW). Na een herstart door INT_WDT,
+//                  TASK_WDT, WDT of PANIC staat die in de reset-reden, bv. "INT_WDT@POST"
+//                  (/advanced en kolom Reset in de Sheet). "@IDLE" = buiten de loop
+//                  (webserver/Wi-Fi-taak).
+//                - Dauwpuntbeveiliging aan/uit in /settings (standaard AAN = gedrag zoals
+//                  voorheen). Uit: effectief setpoint = ingesteld setpoint.
+//                - DHT22 power cycle via relais 3 (IO19, actief-laag, NC-contact in de
+//                  3,3 V-voeding van de DHT22: onbekrachtigd = DHT22 gevoed). Na 6 mislukte
+//                  lezingen op rij: 5 s voeding uit (datapin IO6 dan laag), daarna opwarmen
+//                  3 s en controle (3 lezingen). Mislukt het: eerste 3 pogingen minstens
+//                  5 min uit elkaar, daarna max. 1 per uur. Teller, toestand en knop
+//                  "DHT22 nu resetten" (/dht_reset) op /advanced. Niet in de Sheet.
+//                - Apps Script blijft v1.1 (geen nieuwe kolommen).
+// ----------------------------------------------------------------------------
+// v1.6 (28okt26): - Relais 3 schakelt voortaan de hele SENSOR-3V3-rail (PCB-snede tussen
+//                  UART-connector en het 3v3-pinnetje): DHT22, DS18B20's op de T-Bus en
+//                  RoomSense-box. Tijdens de power cycle (voeding uit + opwarmen) worden
+//                  de DS18B20's NIET gelezen: laatste geldige waarden blijven staan,
+//                  de DS-faalteller blijft ongemoeid en de verwarming wordt niet
+//                  geblokkeerd. De eerste DS-lezing na het terug inschakelen negeert de
+//                  power-on-waarde 85,0 °C (alleen dan; elders is 85 °C geldig, bv.
+//                  ketelpomp). De LDR (op de uitgeschakelde rail) wordt tijdens de
+//                  cycle eveneens vastgehouden.
+//                - Verder ongewijzigd t.o.v. v1.5 (JSON, Sheet, Apps Script v1.1).
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -95,7 +127,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.4"
+#define SJALAY_VERSION "1.6"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -115,6 +147,12 @@ inline void setRelay(bool on) {
 }
 inline void setRelay2(bool on) {
   digitalWrite(RELAY2_PIN, on ? (RELAY_ACTIVE_LOW ? LOW : HIGH) : (RELAY_ACTIVE_LOW ? HIGH : LOW));
+}
+// v1.5/v1.6: relais 3 (IO19) schakelt de sensor-3V3-rail (DHT22 + T-Bus + RoomSense). NC-contact:
+// onbekrachtigd (false) = rail gevoed (fail-safe); bekrachtigd (true) = rail zonder voeding.
+#define RELAY3_PIN  19   // IO19 - Relais 3 -> DHT22 voeding (reset bij vastlopen)
+inline void setRelay3(bool on) {
+  digitalWrite(RELAY3_PIN, on ? (RELAY_ACTIVE_LOW ? LOW : HIGH) : (RELAY_ACTIVE_LOW ? HIGH : LOW));
 }
 
 // ============== SENSOR HEALTH THRESHOLDS ==============
@@ -150,7 +188,7 @@ int ds_fail_streak[DS_MAX_SENSORS] = {0};    // opeenvolgende mislukte lezingen 
 float temp_dht = NAN, temp_ds = 0, humi = NAN, dew = 0, room_temp = 0;  // DHT: NAN tot eerste geldige meting; daarna laatste geldige waarde vastgehouden
 
 // v1.4 diagnostiek
-char reset_reason_txt[16] = "?";
+char reset_reason_txt[32] = "?";
 uint32_t boot_count = 0;
 bool dht_ok = false;                  // laatste DHT22-lezing geldig?
 bool dht_ever_valid = false;          // sinds boot al ooit een geldige meting?
@@ -162,6 +200,39 @@ unsigned long dht_last_valid_ms = 0;  // millis() van laatste geldige meting
 #define DHT_FALLBACK_MAX_AGE_MS 300000UL  // DHT22 als kamer-terugval enkel als laatste meting < 5 min oud
 uint32_t sheets_fail_total = 0;       // mislukte Google-POSTs sinds boot
 unsigned long sheets_last_ms = 0;     // duur van laatste POST (ms)
+
+// v1.5 dauwpuntbeveiliging aan/uit (standaard aan = oud gedrag)
+bool dew_enabled = true;
+
+// v1.5 broodkruimel: laatste fase in RTC-geheugen (overleeft software-/watchdogherstart, niet power-on)
+enum Stage : uint8_t { STG_IDLE = 0, STG_WIFI, STG_PIR, STG_PIX, STG_SHELLY, STG_DHT, STG_DS,
+                       STG_HEAT, STG_SWW, STG_POST, STG_CRASH, STG_OTA, STG_SET, STG_DHTPW, STG_COUNT };
+const char* const STAGE_NAMES[STG_COUNT] = { "IDLE", "WIFI", "PIR", "PIX", "SHELLY", "DHT", "DS",
+                                             "HEAT", "SWW", "POST", "CRASH", "OTA", "SET", "DHTPW" };
+#define RTC_MAGIC 0xA55A1507UL
+RTC_NOINIT_ATTR uint32_t rtc_magic;
+RTC_NOINIT_ATTR uint8_t rtc_stage;
+inline void setStage(uint8_t st) { rtc_stage = st; }
+
+// v1.5 DHT22 power cycle (relais 3)
+enum DhtPcState : uint8_t { PC_IDLE = 0, PC_OFF, PC_WARMUP, PC_CHECK };
+#define DHT_PC_TRIGGER_FAILS  6          // opeenvolgende fouten vóór een power cycle
+#define DHT_PC_OFF_MS         5000UL     // voeding uit
+#define DHT_PC_WARMUP_MS      3000UL     // opwarmen na inschakelen
+#define DHT_PC_CHECK_READS    3          // lezingen (om de 5 s) om te slagen
+#define DHT_PC_CHECK_MAX_MS   30000UL    // veiligheidsnet voor de controlefase
+#define DHT_PC_FAST_RETRY_MS  300000UL   // min. 5 min tussen de eerste pogingen
+#define DHT_PC_SLOW_RETRY_MS  3600000UL  // daarna max. 1 per uur
+#define DHT_PC_FAST_ATTEMPTS  3
+uint8_t dhtpc_state = PC_IDLE;
+bool ds_after_pc = false;   // v1.6: eerstvolgende DS-lezing na power cycle -> 85,0 °C (power-on) negeren
+unsigned long dhtpc_t = 0;               // start van de huidige fase
+unsigned long dhtpc_last_end = 0;        // einde van de laatste poging
+bool dhtpc_ever = false;                 // al een poging gedaan sinds boot?
+bool dhtpc_manual = false;               // handmatig aangevraagd (/dht_reset)
+uint8_t dhtpc_attempts = 0;              // opeenvolgende mislukte pogingen
+uint8_t dhtpc_check_fails = 0;
+uint32_t dhtpc_total = 0;                // aantal power cycles sinds boot
 float temp_boiler = 0;
 int light_ldr = 0;
 int mov1_triggers = 0;
@@ -438,6 +509,10 @@ void loadDS18B20fromNVS() {
 
 void readDS18B20temps() {
   if (ds_count == 0) return;
+  // v1.6: rail zonder voeding of opwarmend -> niet lezen, laatste waarden en tellers blijven staan
+  if (dhtpc_state == PC_OFF || dhtpc_state == PC_WARMUP) return;
+  bool discard85 = ds_after_pc;
+  ds_after_pc = false;
   ow.reset();
   ow.writeByte(0xCC);  // SKIP ROM - alle sensoren tegelijk
   ow.writeByte(0x44);  // CONVERT T
@@ -462,6 +537,10 @@ void readDS18B20temps() {
     }
     int16_t raw = (int16_t)((data[1] << 8) | data[0]);
     float t = raw / 16.0f;
+    if (discard85 && raw == 0x0550) {   // v1.6: power-on-waarde 85,0 °C na power cycle: negeren, geen fout tellen
+      Serial.printf("[DS18B20] sensor %d: 85,0 °C power-on-waarde genegeerd\n", i);
+      continue;
+    }
     if (t >= -55.0f && t <= 125.0f) {
       temp_ds_arr[i] = t;
       ds_valid_this_read[i] = true;
@@ -475,12 +554,88 @@ void readDS18B20temps() {
   temp_boiler = (ds_boiler  >= 0 && ds_boiler  < ds_count) ? temp_ds_arr[ds_boiler]  : 0.0f;
 }
 
+// ============== v1.5 DHT22 POWER CYCLE (relais 3, IO19) ==============
+void dhtpcStart(const char* why) {
+  dhtpc_state = PC_OFF;
+  dhtpc_t = millis();
+  dhtpc_ever = true;
+  dhtpc_total++;
+  setStage(STG_DHTPW);
+  pinMode(DHT_PIN, OUTPUT);
+  digitalWrite(DHT_PIN, LOW);   // datapin laag: anders houdt de pull-up de sensor via zijn beschermdiode half gevoed
+  setRelay3(true);              // DHT22 zonder voeding
+  Serial.printf("[DHT22] power cycle #%u gestart (%s), %u fouten op rij\n", (unsigned)dhtpc_total, why, (unsigned)dht_fail_streak);
+}
+
+void updateDhtPowerCycle() {
+  unsigned long now = millis();
+  switch (dhtpc_state) {
+    case PC_IDLE:
+      if (dhtpc_manual) {
+        dhtpc_manual = false;
+        dhtpcStart("handmatig");
+      } else if (!dht_ok && dht_fail_streak >= DHT_PC_TRIGGER_FAILS) {
+        unsigned long wait_ms = (dhtpc_attempts >= DHT_PC_FAST_ATTEMPTS) ? DHT_PC_SLOW_RETRY_MS : DHT_PC_FAST_RETRY_MS;
+        if (!dhtpc_ever || (now - dhtpc_last_end) >= wait_ms) dhtpcStart("auto");
+      }
+      break;
+    case PC_OFF:
+      if (now - dhtpc_t >= DHT_PC_OFF_MS) {
+        setRelay3(false);                 // sensorrail weer gevoed
+        ds_after_pc = true;               // v1.6
+        pinMode(DHT_PIN, INPUT_PULLUP);
+        dht.begin();
+        dhtpc_state = PC_WARMUP;
+        dhtpc_t = now;
+      }
+      break;
+    case PC_WARMUP:
+      if (now - dhtpc_t >= DHT_PC_WARMUP_MS) {
+        dhtpc_state = PC_CHECK;
+        dhtpc_check_fails = 0;
+        dhtpc_t = now;
+      }
+      break;
+    case PC_CHECK:
+      if (now - dhtpc_t >= DHT_PC_CHECK_MAX_MS) {   // veiligheidsnet
+        if (dhtpc_attempts < 255) dhtpc_attempts++;
+        dhtpc_state = PC_IDLE;
+        dhtpc_last_end = now;
+      }
+      break;
+  }
+}
+
+// Na elke DHT-lezing aanroepen: beoordeelt de controlefase van een power cycle
+void dhtpcEvaluate() {
+  if (dhtpc_state != PC_CHECK) return;
+  unsigned long now = millis();
+  if (dht_ok) {
+    Serial.println("[DHT22] power cycle geslaagd: sensor leest weer");
+    dhtpc_attempts = 0;
+    dhtpc_state = PC_IDLE;
+    dhtpc_last_end = now;
+  } else if (++dhtpc_check_fails >= DHT_PC_CHECK_READS) {
+    if (dhtpc_attempts < 255) dhtpc_attempts++;
+    Serial.printf("[DHT22] power cycle mislukt (poging %u op rij)\n", (unsigned)dhtpc_attempts);
+    dhtpc_state = PC_IDLE;
+    dhtpc_last_end = now;
+  }
+}
+
 void readAllSensors() {
   // v1.4: DHT22 met bewaking. Bij een mislukte lezing blijven humi/temp_dht op de
   // laatste geldige waarde staan (vocht/dauwpunt), tot de sensor terugkeert.
-  float h_new = dht.readHumidity();
-  float t_new = dht.readTemperature();
-  if (!isnan(h_new) && !isnan(t_new)) {
+  setStage(STG_DHT);
+  bool dht_skip = (dhtpc_state == PC_OFF || dhtpc_state == PC_WARMUP);  // v1.5: sensor zonder voeding of opwarmend -> niet lezen
+  float h_new = NAN, t_new = NAN;
+  if (!dht_skip) {
+    h_new = dht.readHumidity();
+    t_new = dht.readTemperature();
+  }
+  if (dht_skip) {
+    // geen lezing, tellers ongemoeid laten
+  } else if (!isnan(h_new) && !isnan(t_new)) {
     humi = h_new;
     temp_dht = t_new;
     dht_ok = true;
@@ -497,9 +652,11 @@ void readAllSensors() {
       Serial.printf("[DHT22] %u fouten op rij -> dht.begin() opnieuw (#%u)\n", (unsigned)dht_fail_streak, (unsigned)dht_reinit_count);
     }
   }
+  if (!dht_skip) dhtpcEvaluate();
   dew = calculateDewPoint(temp_dht, humi);  // 0 zolang er nog nooit een geldige meting was
+  setStage(STG_DS);
   readDS18B20temps();
-  light_ldr = scaleLDR(analogRead(LDR_ANALOG));
+  if (dhtpc_state != PC_OFF && dhtpc_state != PC_WARMUP) light_ldr = scaleLDR(analogRead(LDR_ANALOG));   // v1.6: rail uit -> LDR vasthouden
 
   // --- Kamertemperatuur: primaire DS18B20 -> terugval DHT22 -> anders onbetrouwbaar ---
   bool primary_missing = (ds_count == 0) || (ds_primary < 0) || (ds_primary >= ds_count)
@@ -553,7 +710,7 @@ void readAllSensors() {
 void updateHeatingLogic() {
   bool new_state;
   if (heating_auto) {
-    effective_setpoint = max((float)heating_setpoint, dew + dew_margin);
+    effective_setpoint = dew_enabled ? max((float)heating_setpoint, dew + dew_margin) : (float)heating_setpoint;
     float half = hyst_cv / 2.0f;
     if (room_temp < effective_setpoint - half) new_state = true;
     else if (room_temp > effective_setpoint + half) new_state = false;
@@ -807,13 +964,14 @@ const char* dsRoleLabel(int i) {
 // ============== GOOGLE SHEETS: POST /json elke 5 min ==============
 void postToGoogleSheets() {
   sheets_last_post = millis();
+  setStage(STG_POST);
   if (strlen(gas_url) == 0) return;
   if (WiFi.status() != WL_CONNECTED) { Serial.println("[Sheets] geen Wi-Fi, overgeslagen"); return; }
 
   WiFiClientSecure client;
   client.setInsecure();  // Apps Script gebruikt Google's publieke cert; geen pinning nodig voor dit doel
   HTTPClient http;
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // Apps Script webhooks doen 302 -> echte URL
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);  // v1.5: Apps Script verwerkt de POST en antwoordt 302; de doorverwijzing volgen geeft enkel een nutteloze HTTP 400
   http.setTimeout(5000);  // v1.4: max 5 s wachten (was standaard, kon de loop lang blokkeren)
   unsigned long t0 = millis();
   if (!http.begin(client, gas_url)) {
@@ -827,7 +985,7 @@ void postToGoogleSheets() {
   sheets_last_code = http.POST(payload);
   http.end();
   sheets_last_ms = millis() - t0;
-  if (sheets_last_code != 200) sheets_fail_total++;
+  if (sheets_last_code != 200 && sheets_last_code != 302 && sheets_last_code != 303) sheets_fail_total++;
   Serial.printf("[Sheets] POST -> HTTP %d (%lu ms, %u fouten sinds boot)\n", sheets_last_code, sheets_last_ms, (unsigned)sheets_fail_total);
 }
 // ============== CRASH-LOG (NVS namespace "crash-log") ==============
@@ -947,6 +1105,7 @@ void loadConfigFromNVS() {
   relay_manual     = preferences.getBool("relay_man", false);
   heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 5, 30);
   dew_margin       = constrain(preferences.getFloat("dew_margin", 2.0), -10.0f, 10.0f);
+  dew_enabled      = preferences.getBool("dew_en", true);   // v1.5
   hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
   LDR_DARK_THRESHOLD = constrain(preferences.getInt("ldr_dark", 40), 0, 100);
   { String t = preferences.getString("gas_url", ""); strlcpy(gas_url, t.c_str(), sizeof(gas_url)); }
@@ -1207,6 +1366,16 @@ void handleStatus(AsyncWebServerRequest *request) {
     p->printf("<tr><td class=\"label\">DHT22 status<br><span style=\"font-size:11px;color:#888;\">totaal fouten %u, herinit %u</span></td><td class=\"value\" id=\"v-dhts\" colspan=\"2\" style=\"color:%s;\">%s</td></tr>",
       (unsigned)dht_fail_total, (unsigned)dht_reinit_count, dht_ok ? "#2a9d2a" : "#c00", dhtTxt);
   }
+  { // v1.5: DHT22 power cycle (relais 3)
+    const char* pcst = dhtpc_state == PC_IDLE ? "rust" : dhtpc_state == PC_OFF ? "voeding UIT" : dhtpc_state == PC_WARMUP ? "opwarmen" : "controle";
+    char lastTxt[40];
+    if (!dhtpc_ever) strlcpy(lastTxt, "nog niet", sizeof(lastTxt));
+    else if (dhtpc_state != PC_IDLE) strlcpy(lastTxt, "bezig", sizeof(lastTxt));
+    else snprintf(lastTxt, sizeof(lastTxt), "%lu s geleden", (millis() - dhtpc_last_end) / 1000UL);
+    p->printf("<tr><td class=\"label\">DHT22 power cycle (relais 3)<br><span style=\"font-size:11px;color:#888;\">%u mislukt op rij; auto na %d fouten</span></td>"
+      "<td class=\"value\" colspan=\"2\">%u keer &mdash; nu: %s &mdash; laatste: %s &nbsp; <a class=\"btn\" href=\"/dht_reset\">DHT22 nu resetten</a></td></tr>",
+      (unsigned)dhtpc_attempts, DHT_PC_TRIGGER_FAILS, (unsigned)dhtpc_total, pcst, lastTxt);
+  }
   p->printf("<tr><td class=\"label\">Dauwpunt</td><td class=\"value\" id=\"v-dp\" colspan=\"2\">%.1f &deg;C</td></tr>", dew);
   p->printf("<tr><td class=\"label\">Kamertemperatuur<br><span style=\"font-size:11px;color:#888;\">bron: <span id=\"v-rtsrc\">%s</span></span></td><td class=\"value\" id=\"v-rt\" colspan=\"2\">%s</td></tr>",
     room_source, room_temp_reliable ? (String(room_temp, 1) + " &deg;C").c_str() : "n.v.t.");
@@ -1331,7 +1500,10 @@ void handleStatus(AsyncWebServerRequest *request) {
     p->printf("<tr><td class=\"label\">Google Sheets</td><td class=\"value\" id=\"v-gas\" colspan=\"2\">%s</td></tr>", gasTxt);
   }
   p->printf("<tr><td class=\"label\">Laatste resultaat</td><td class=\"value\" id=\"v-gcode\" colspan=\"2\">%s</td></tr>",
-    sheets_last_post == 0 ? "nog niet geprobeerd" : (sheets_last_code == 200 ? "HTTP 200 (OK)" : String("HTTP " + String(sheets_last_code)).c_str()));
+    sheets_last_post == 0 ? "nog niet geprobeerd"
+      : ((sheets_last_code == 200 || sheets_last_code == 302 || sheets_last_code == 303)
+          ? (String("OK (HTTP ") + String(sheets_last_code) + ")").c_str()
+          : String("HTTP " + String(sheets_last_code)).c_str()));
   p->print("</table>");
 
   p->print("<div class=\"group-title\">Controller</div><table>");
@@ -1444,6 +1616,9 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">mDNS-naam<br><span style=\"font-size:11px;color:#888;\">enkel a-z/0-9/streepjes, herstart nodig</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"mdns\" value=\"%s\" maxlength=\"31\"> .local</td></tr>", mdns_name);
   p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)<br><span style=\"font-size:11px;color:#888;\">negatief toegestaan (-10 t/m 10): dan neem je zelf het vochtrisico</span></td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"-10\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
+  p->printf("<tr><td class=\"label\">Dauwpuntbeveiliging<br><span style=\"font-size:11px;color:#888;\">uit = het setpoint geldt altijd, zonder verhoging door het dauwpunt</span></td>"
+    "<td class=\"control\"><select name=\"dewen\"><option value=\"1\"%s>Aan</option><option value=\"0\"%s>Uit</option></select></td></tr>",
+    dew_enabled ? " selected" : "", dew_enabled ? "" : " selected");
   p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
   p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
   p->printf("<tr><td class=\"label\">LDR donker-drempel (0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
@@ -1516,6 +1691,7 @@ void handleSettings(AsyncWebServerRequest *request) {
 }
 
 void handleSaveSettings(AsyncWebServerRequest *request) {
+  setStage(STG_SET);
   preferences.begin("sjalay-cfg", false);
   if (request->hasParam("rid")) {
     String v = request->getParam("rid")->value();
@@ -1542,6 +1718,10 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     dew_margin = request->getParam("dew")->value().toFloat();
     dew_margin = constrain(dew_margin, -10.0f, 10.0f);
     preferences.putFloat("dew_margin", dew_margin);
+  }
+  if (request->hasParam("dewen")) {   // v1.5
+    dew_enabled = (request->getParam("dewen")->value().toInt() != 0);
+    preferences.putBool("dew_en", dew_enabled);
   }
   if (request->hasParam("hystcv")) {
     hyst_cv = constrain(request->getParam("hystcv")->value().toFloat(), 0.2f, 5.0f);
@@ -1774,6 +1954,11 @@ void handleToggleBed(AsyncWebServerRequest *request) {
   request->send(200, "text/plain", "OK");
 }
 
+void handleDhtReset(AsyncWebServerRequest *request) {   // v1.5: handmatige DHT22 power cycle
+  dhtpc_manual = true;
+  request->redirect("/advanced");
+}
+
 void handleClearCrashLog(AsyncWebServerRequest *request) {
   Preferences crashPrefs;
   crashPrefs.begin("crash-log", false);
@@ -1815,12 +2000,21 @@ void setup() {
   setRelay(false);
   pinMode(RELAY2_PIN, OUTPUT);
   setRelay2(false);
-  Serial.println("[RELAIS] Fail-safe: beide relais UIT bij boot.");
+  pinMode(RELAY3_PIN, OUTPUT);
+  setRelay3(false);   // v1.5: relais 3 onbekrachtigd = DHT22 gevoed
+  Serial.println("[RELAIS] Fail-safe: relais 1, 2 en 3 UIT bij boot.");
 
   printLastCrashOnBoot();
 
   // v1.4: reset-reden + opstartteller (NVS namespace "diag")
-  strlcpy(reset_reason_txt, resetReasonText(), sizeof(reset_reason_txt));
+  { const char* rr = resetReasonText();
+    bool wd = (strcmp(rr, "INT_WDT") == 0 || strcmp(rr, "TASK_WDT") == 0 || strcmp(rr, "WDT") == 0 || strcmp(rr, "PANIC") == 0);
+    if (wd && rtc_magic == RTC_MAGIC && rtc_stage < STG_COUNT)
+      snprintf(reset_reason_txt, sizeof(reset_reason_txt), "%s@%s", rr, STAGE_NAMES[rtc_stage]);   // v1.5 broodkruimel
+    else
+      strlcpy(reset_reason_txt, rr, sizeof(reset_reason_txt));
+    rtc_magic = RTC_MAGIC;
+    rtc_stage = STG_IDLE; }
   { Preferences diagPrefs;
     diagPrefs.begin("diag", false);
     boot_count = diagPrefs.getUInt("boots", 0) + 1;
@@ -1966,6 +2160,7 @@ void setup() {
   server.on("/save_settings", HTTP_GET, handleSaveSettings);
   server.on("/factory_reset", HTTP_GET, handleFactoryReset);
   server.on("/clear_crash_log", HTTP_GET, handleClearCrashLog);
+  server.on("/dht_reset", HTTP_GET, handleDhtReset);
   server.on("/rescan_ds", HTTP_GET, handleRescanDS);
   server.on("/toggle_heating_auto", HTTP_GET, handleToggleHeatingAuto);
   server.on("/toggle_relay_manual", HTTP_GET, handleToggleRelayManual);
@@ -2015,6 +2210,7 @@ void setup() {
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
       if (!index) {
         Serial.printf("[OTA] Start: %s\n", filename.c_str());
+        setStage(STG_OTA);
         if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
       }
       if (Update.write(data, len) != len) Update.printError(Serial);
@@ -2039,6 +2235,7 @@ void setup() {
 
 // ============== LOOP ==============
 void loop() {
+  setStage(STG_WIFI);
   if (ap_mode_active) {
     dnsServer.processNextRequest();
   } else if (WiFi.status() != WL_CONNECTED) {
@@ -2053,8 +2250,11 @@ void loop() {
   static unsigned long last_crash_check = 0;
   if (millis() - last_crash_check > 5000) {
     last_crash_check = millis();
+    setStage(STG_CRASH);
     checkCrashLog();
   }
+
+  setStage(STG_PIR);
 
   // PIR continu bewaken (flankdetectie LOW = beweging)
   int mov1_state = digitalRead(PIR_MOV1);
@@ -2065,11 +2265,13 @@ void loop() {
   mov1_prev_state = mov1_state;
 
   // Powerpixels: logica elke cyclus (voor AUTO-respons), fade-engine elke ~10-500ms
+  setStage(STG_PIX);
   updatePixelLogic();
   updateFades();
 
   // Shelly-koppeling: enkel versturen bij een effectieve aan/uit-wissel van een pixel
   // (rand-detectie, goedkoop elke cyclus; de HTTP-call zelf gebeurt dus zelden).
+  setStage(STG_SHELLY);
   if (!ap_mode_active) {
     for (int i = 0; i < pixels_num; i++) {
       if (pixel_on[i] != prev_pixel_on[i]) {
@@ -2082,12 +2284,16 @@ void loop() {
   // Duty-cyclus verwarming: elke cyclus tijd bijhouden (goedkoop, enkel millis-rekenwerk)
   updateDutyCycle();
 
+  updateDhtPowerCycle();   // v1.5: niet-blokkerende toestandsmachine voor de DHT22-reset
+
   // Trage sensoren (DHT/DS18B20 blokkeert ~750ms) elke 5s, niet in AP-modus setup-flow
   static unsigned long last_sensor_read = 0;
   if (millis() - last_sensor_read > 5000) {
     last_sensor_read = millis();
     readAllSensors();
+    setStage(STG_HEAT);
     updateHeatingLogic();
+    setStage(STG_SWW);
     updateSWWLogic();
   }
 
@@ -2095,4 +2301,5 @@ void loop() {
   if (!ap_mode_active && millis() - sheets_last_post > sheetsIntervalMs()) {
     postToGoogleSheets();
   }
+  setStage(STG_IDLE);
 }
