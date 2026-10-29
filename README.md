@@ -8,7 +8,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
 | **Sketch** | v1.7 (`SJALAY_CONTROLLER_v1.7.ino`; map en bestand moeten dezelfde naam hebben) |
 | **Apps Script** | v1.1 (`SJALAY_SHEETS_LOGGER.gs`) |
-| **Laatst bijgewerkt** | 28 oktober 2026 |
+| **Laatst bijgewerkt** | 29 oktober 2026 |
 
 **Dit document heeft twee delen**
 - **Deel A, voor familie en huurders:** hoe gebruik je de verwarming, het warm water en de lampen, en wat doe je als iets niet werkt. Sectie A1 is bedoeld om door te sturen via WhatsApp.
@@ -122,6 +122,7 @@ Handgeschreven instructie van Filip (25/10/2026), in de ketelkast gestoken bij d
 - **Twee keer `INT_WDT`-herstart** (25/10 21:11 en 23:17): een softwarevastloper, geen brownout (zie B7)
 - "POST fouten" telt elke POST als mislukt (HTTP 400) terwijl de rijen wel binnenkomen: oorzaak bekend, oplossing in de sketch-todo (v1.5)
 - CV AAN-kant nog te testen (huis is nu 12 °C, ketel UIT, setpoint 5 °C, Sjalay staat leeg)
+- **Voedingsonderzoek loopt** (29/10): testplan en bevindingen in B7 "Voedingsonderzoek DHT22"
 - Voeding van de controller op 5,0 V (VOLTCRAFT USPS-600): of de herstarts echt stopten, wordt in de log gevolgd
 
 ## B2. Ketel en relais
@@ -313,6 +314,41 @@ Doel: dezelfde schaal in alle controllers: **0 = donker, 100 = fel**, zodat Shee
 - [ ] **JSON en Sheet:** de waarde in `/json` (sleutel `l` bij de Sjalay) volgt de nieuwe schaal. Een apart Apps Script is niet nodig, wel de oude Sheet-rijen omzetten (hulpkolom `100 − LDR` en plakken als waarden, zoals op 28/10 in de Sjalay-Sheet)
 - [ ] **Versiekop, changelog en README** van die sketch bijwerken, OTA-test: hand voor de LDR → waarde daalt bij donker; nachtregeling gedraagt zich als voorheen
 - [ ] Ook andere plaatsen waar de oude schaal staat nalopen (Zarlar-documentatie, Matter/HomeKit-koppeling in `OVERNAMEDOCUMENT.md`: lichtsensor 0 = donker kan een ander eenheidsmodel vragen)
+
+**Voedingsonderzoek DHT22 (29/10) — wat we leerden en wat te testen**
+
+*Wat we vaststelden (feiten)*
+- **PCB `ESP32_shield_v2.0`:** er staan **twee 500 mA-PTC's**: één in de 3V3-baan (linksboven, naast de controller) en één in de 5V-baan, net na de optionele buck-module (VCC_5V). De OPTION-connector (+5 V en de relaissignalen) hangt **achter de 5V-PTC**: in de **Sjalay** én op de **HVAC-controller** loopt de relaisstroom dus door de PTC. De optionele buck-module (6–23 V → 5 V) wordt alleen geplaatst bij een 12 V-voeding; dan wordt de + lijn eronder doorgesneden. Bij 5 V op de SM-connector: geen module, baan intact.
+- **Testroom (R-EETPL):** dezelfde shield, geen buck-module, baan intact, geen relaismodule, **5 V via de USB-C van de devkit** (Apple A1400, Salcomp, 5 V / 1 A). Deze weg omzeilt de SM-connector en de 5V-PTC. Log 1/5 – 29/10 (5014 rijen): DHT22 geldig op 5013 rijen (één slechte rij op 11/6), maar **94 herstarts** (mediane uptime 1,2 dag, max 7,9 dagen) en de minimale vrije heap staat soms op 0. De DHT22 overleeft dus herstarts en valt niet spontaan uit op deze opstelling.
+- **HVAC-controller (testopstelling thuis):** 10 relais via I2C (8+2 modules) op een Velleman PSSE510 (5 V / 1 A, geschakeld), relaisvoeding achter de 5V-PTC, **geen** RoomSense/DHT22.
+- **Sjalay-controller:** relaissignalen en +5 V zitten op de OPTION-pinnen (achter de 5V-PTC); 5 V op de SM-connector via de USPS-600 (lange dunne kabel).
+- **De uitval van 26/10 02:07 gebeurde zonder relaisactiviteit en zonder herstart** (HEAT = 0 en SWW-pomp = 0 sinds minstens 25/10 23:00, uptime liep door). Een dip door schakelende relaisspoelen kan deze uitval dus **niet** verklaren.
+
+*Hypothesen (nog niet bewezen)*
+- De ESP32-C6 werkt tot ± 3,0 V op de 3,3 V-lijn; de DHT22 heeft minstens 3,3 V nodig. Zakt de 5 V onder ± 4,3–4,4 V (spanningsval over de lange dunne kabel + SM-connector + 5V-PTC, Wi-Fi-pieken ± 250–350 mA, relais, pixels), dan zakt de 3,3 V van de (LDO-)regelaar van de devkit onder 3,3 V en kan de DHT22 vastlopen terwijl de ESP gewoon doorloopt (geen reset, past bij het beeld).
+- Een 500 mA-PTC is een hold-stroom en geen harde limiet: warm (ketelruimte) daalt die en stijgt de weerstand. Dit verklaart mogelijk het verschil met de testroom, waar USB-C de PTC omzeilt.
+- Nog open: de DHT22 of zijn kabel zelf, storing van ketel of relais op de kabels, de Sjalay-sketch (leescode, 750 ms DS-lezing).
+
+*Uitkomst per test*
+- Stabiel op de testroom via de SM-connector → het voedingspad is niet de oorzaak; zoeken bij relaismodule, ketelstoring, kabel naar de box, sketch.
+- Valt uit via de SM-connector → het pad (SM, PTC, VCC_5V) of de voeding is de oorzaak; dan USPS-600 + lange kabel (test 2) om pad en voeding te scheiden.
+
+*Testplan thuis (Zarlardinge, nu)* — telkens één verandering, minstens 3–5 dagen, noteer het tijdstip en de `POWERON`-reset. Zelfde sketch, zelfde kabel.
+1. **Testroom omgekeerd:** USB-C los, alleen de A1400 (korte, dikke kabel, polariteit meten, rood = +) op de **SM-connector**. Nooit twee voedingen tegelijk. Meet meteen: 5 V aan de 5V-pin van de devkit, spanning **vóór en ná de 5V-PTC**, 3,3 V aan de DHT-pin (scoop single-shot, trigger onder ± 3,2 V).
+2. **Zelfde, met de USPS-600 en de lange dunne kabel** (scheidt pad en voeding).
+3. **PTC meten op de HVAC-controller:** 5 V aan de devkit en de spanning over de 5V-PTC bij rust, 1, 5 en 10 relais aan (scoop single-shot, trigger 4,5 V). Doel: hoeveel zakt de PSSE510 en hoe veel valt er over de PTC bij 0,6–0,9 A? Interpretatie: 5 V ≥ 4,75 V en 3,3 V ≥ 3,25 V = ok; 5 V < 4,5 V of 3,3 V < 3,2 V = DHT22-risico.
+4. **Dip-test met de DPS150** op de testroom (limiet 1 A, OVP instellen, start 5,0 V): 4,6 → 4,4 → 4,2 V en noteer bij welke spanning de DHT22 uitvalt of de ESP reset. Dit bepaalt de marge.
+5. **Relaisbelasting op de testroom** (optioneel): relaismodule op dezelfde 5 V (achter de PTC), met de hand schakelen; meet de dip en kijk of `Temp2`/`Vocht` wegvalt.
+6. Test 4 (DHT22 op de HVAC-controller met testsketch) alleen als 1–3 iets verdachts tonen; sketch pas na akkoord.
+
+*In de Sjalay, volgend bezoek* (volgorde, één ding tegelijk, daarna telkens 3–5 dagen)
+1. Meet eerst: 5 V aan de 5V-pin van de devkit, vóór en ná de PTC en de 3,3 V aan de DHT-pin onder normale belasting (Wi-Fi, relais aan en uit).
+2. **Voed de controller via een USB-C-poort** van de devkit met de A1400 (korte kabel), SM-connector los (nooit beide). De relaisstroom loopt dan via de devkit in plaats van de PTC. Zelfde poort als in de testroom. Dit is ook een echte power cycle voor de DHT22.
+3. Pas daarna **de relaisvoeding verplaatsen naar de + lijn onder de optionele regelaar** (vóór de 5V-PTC) om de PTC te ontlasten en de spoelinschakeling van de logica-rail te houden.
+4. Pas daarna de PCB-snede + relais 3 (zie B4/B7) als noodoplossing, en/of een zwaardere voeding (≥ 2 A, korte dikke kabel).
+5. Optioneel, kortstondig en met zorg: tijdelijke brug over de 5V-PTC als diagnose (haalt de beveiliging weg).
+
+*Te onthouden:* de DHT22 is niet kapot of ongeschikt (testroom: 5 mnd goed); de oorzaak zit in de Sjalay-opstelling (voedingspad, warmte, bedrading, sketch). Eén variabele per test.
 
 **Stap C — Pi, Tailscale en reservekaart**
 - Reservekaart thuis opnieuw met een ander merkkaartje (Imager met verificatie), daarna opstarttest in de Pi
