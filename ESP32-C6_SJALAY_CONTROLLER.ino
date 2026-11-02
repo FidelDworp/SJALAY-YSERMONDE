@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.7 — 28 okt 2026
+// SJALAY CONTROLLER — v1.8 — 2 nov 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -117,6 +117,17 @@
 //                  een bestaande oude drempel (sleutel "ldr_dark") eenmalig omgerekend naar
 //                  100 - oud, zodat de nachtregeling hetzelfde blijft gedragen.
 // ----------------------------------------------------------------------------
+// v1.8 (2nov26): - Minimum van beide setpoints instelbaar in /settings (bewakingsdrempel):
+//                  "Minimum kamer-setpoint" (2-25 °C, standaard 5) en "Minimum boiler-
+//                  setpoint" (3-50 °C, standaard 10). Dat minimum is meteen het laagste
+//                  setpoint dat de regeling nog aanhoudt: de schuivers (landingspagina en
+//                  /advanced), /set_setpoint en /set_boiler_setpoint beginnen daar. Wordt
+//                  het minimum boven het opgeslagen setpoint gezet, dan wordt het
+//                  setpoint verhoogd (en bewaard). Nieuwe NVS-sleutels "heat_min" en
+//                  "sww_min"; zonder die sleutels is het gedrag gelijk aan v1.7 (5 en 10).
+//                  Maximum blijft 30 °C (kamer) en 60 °C (boiler).
+//                - Geen nieuwe Sheet-kolommen, Apps Script blijft v1.1.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -138,7 +149,7 @@
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.7"
+#define SJALAY_VERSION "1.8"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -266,7 +277,9 @@ float hyst_cv = 1.0;              // hysteresisband verwarming (°C, symmetrisch
 // SWW-logica / relais 2 (laadpomp)
 bool sww_auto = false;            // false = handmatige modus (default)
 bool relay2_manual = false;       // gewenste relais2-staat in handmatige modus
-int boiler_setpoint = 40;         // gewenste boilertemp (40-60)
+int boiler_setpoint = 40;         // gewenste boilertemp (sww_min-60)
+int heat_min = 5;                 // v1.8: minimum kamer-setpoint (2-25), bewakingsdrempel
+int sww_min  = 10;                // v1.8: minimum boiler-setpoint (3-50), bewakingsdrempel
 bool sww_on = false;              // huidige relais2-staat
 float hyst_sww = 5.0;             // hysteresisband SWW (°C, symmetrisch rond setpoint)
 
@@ -1114,7 +1127,9 @@ void loadConfigFromNVS() {
   { String t = preferences.getString("mdns_name", "sjalay"); strlcpy(mdns_name, t.c_str(), sizeof(mdns_name)); }
   heating_auto     = preferences.getBool("heat_auto", false);
   relay_manual     = preferences.getBool("relay_man", false);
-  heating_setpoint = constrain(preferences.getInt("heat_sp", 20), 5, 30);
+  heat_min         = constrain(preferences.getInt("heat_min", 5), 2, 25);     // v1.8
+  sww_min          = constrain(preferences.getInt("sww_min", 10), 3, 50);     // v1.8
+  heating_setpoint = constrain(preferences.getInt("heat_sp", 20), heat_min, 30);
   dew_margin       = constrain(preferences.getFloat("dew_margin", 2.0), -10.0f, 10.0f);
   dew_enabled      = preferences.getBool("dew_en", true);   // v1.5
   hyst_cv          = constrain(preferences.getFloat("hyst_cv", 1.0), 0.2f, 5.0f);
@@ -1127,7 +1142,7 @@ void loadConfigFromNVS() {
 
   sww_auto        = preferences.getBool("sww_auto", false);
   relay2_manual   = preferences.getBool("relay2_man", false);
-  boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), 10, 60);
+  boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), sww_min, 60);
   hyst_sww        = constrain(preferences.getFloat("hyst_sww", 5.0), 0.5f, 15.0f);
 }
 
@@ -1262,12 +1277,12 @@ void handleLanding(AsyncWebServerRequest *request) {
   p->printf("<div class=\"card heat\"><div class=\"icring%s\" id=\"ic-heat\">&#128293;</div>"
     "<div class=\"big\"><span id=\"v-rt\">%s</span><span class=\"soll\" id=\"v-heff-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
-    "<input type=\"range\" id=\"sl-hsp\" min=\"5\" max=\"30\" value=\"%d\" "
+    "<input type=\"range\" id=\"sl-hsp\" min=\"%d\" max=\"30\" value=\"%d\" "
     "oninput=\"document.getElementById('v-heff-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_setpoint',this.value)\"></form></div>",
     heating_on ? " active" : "",
     room_temp_reliable ? (String(room_temp, 1) + "&deg;").c_str() : "n.v.t.",
-    (int)round(effective_setpoint), heating_setpoint);
+    (int)round(effective_setpoint), heat_min, heating_setpoint);
 
   // ---- SWW ----
   // Idem: groot IST (gemeten boilertemp), klein "(-> X°)" = SOLL (setpoint; voor SWW
@@ -1275,12 +1290,12 @@ void handleLanding(AsyncWebServerRequest *request) {
   p->printf("<div class=\"card sww\"><div class=\"icring%s\" id=\"ic-sww\">&#128703;</div>"
     "<div class=\"big\"><span id=\"v-bt\">%s</span><span class=\"soll\" id=\"v-bsp-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
-    "<input type=\"range\" id=\"sl-bsp\" min=\"10\" max=\"60\" value=\"%d\" "
+    "<input type=\"range\" id=\"sl-bsp\" min=\"%d\" max=\"60\" value=\"%d\" "
     "oninput=\"document.getElementById('v-bsp-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_boiler_setpoint',this.value)\"></form></div>",
     sww_on ? " active" : "",
     boiler_temp_reliable ? (String(temp_boiler, 1) + "&deg;").c_str() : "n.v.t.",
-    boiler_setpoint, boiler_setpoint);
+    boiler_setpoint, sww_min, boiler_setpoint);
 
   // ---- Geavanceerd (enkel icoon, geen tekst) ----
   p->print("<div class=\"gearwrap\"><a href=\"/advanced\">&#9881;&#65039;</a></div>");
@@ -1361,8 +1376,8 @@ void handleStatus(AsyncWebServerRequest *request) {
 
   p->printf("<tr><td class=\"label\">Setpoint</td><td class=\"value\" id=\"v-hsp\">%d &deg;C</td>"
     "<td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
-    "<input type=\"range\" class=\"slider\" id=\"sl-hsp\" name=\"value\" min=\"5\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
-    "</form></td></tr>", heating_setpoint, heating_setpoint);
+    "<input type=\"range\" class=\"slider\" id=\"sl-hsp\" name=\"value\" min=\"%d\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
+    "</form></td></tr>", heating_setpoint, heat_min, heating_setpoint);
   { char humTxt[16];
     if (isnan(humi)) strlcpy(humTxt, "n.v.t.", sizeof(humTxt));
     else snprintf(humTxt, sizeof(humTxt), "%.0f%%", humi);
@@ -1417,8 +1432,8 @@ void handleStatus(AsyncWebServerRequest *request) {
     relay2_manual ? "AAN" : "UIT", relay2_manual ? " checked" : "");
   p->printf("<tr><td class=\"label\">Boiler-setpoint</td><td class=\"value\" id=\"v-bsp\">%d &deg;C</td>"
     "<td class=\"control\"><form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
-    "<input type=\"range\" class=\"slider\" id=\"sl-bsp\" name=\"value\" min=\"10\" max=\"60\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
-    "</form></td></tr>", boiler_setpoint, boiler_setpoint);
+    "<input type=\"range\" class=\"slider\" id=\"sl-bsp\" name=\"value\" min=\"%d\" max=\"60\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
+    "</form></td></tr>", boiler_setpoint, sww_min, boiler_setpoint);
   p->printf("<tr><td class=\"label\">Boilertemperatuur (%s)</td><td class=\"value\" id=\"v-bt\" colspan=\"2\">%s</td></tr>",
     ds_boiler >= 0 ? ds_nicknames[ds_boiler] : "geen sensor", boiler_temp_reliable ? (String(temp_boiler, 1) + " &deg;C").c_str() : "n.v.t.");
   p->printf("<tr><td class=\"label\">SWW-pomp</td><td class=\"value\" id=\"v-swon\" colspan=\"2\">"
@@ -1635,6 +1650,10 @@ void handleSettings(AsyncWebServerRequest *request) {
     dew_enabled ? " selected" : "", dew_enabled ? "" : " selected");
   p->printf("<tr><td class=\"label\">Hysterese verwarming<br><span style=\"font-size:11px;color:#888;\">band rond setpoint, min. 0,2&deg;C</span></td><td class=\"control\"><input type=\"number\" name=\"hystcv\" step=\"0.1\" min=\"0.2\" max=\"5\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_cv);
   p->printf("<tr><td class=\"label\">Hysterese SWW<br><span style=\"font-size:11px;color:#888;\">band rond boiler-setpoint</span></td><td class=\"control\"><input type=\"number\" name=\"hystsww\" step=\"0.5\" min=\"0.5\" max=\"15\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", hyst_sww);
+  p->printf("<tr><td class=\"label\">Minimum kamer-setpoint (bewakingsdrempel)<br><span style=\"font-size:11px;color:#888;\">2-25 &deg;C, standaard 5. Laagste setpoint dat de regeling aanhoudt; de schuiver begint hier</span></td>"
+    "<td class=\"control\"><input type=\"number\" name=\"hmin\" min=\"2\" max=\"25\" value=\"%d\" style=\"width:60px;\"> &deg;C</td></tr>", heat_min);
+  p->printf("<tr><td class=\"label\">Minimum boiler-setpoint (bewakingsdrempel)<br><span style=\"font-size:11px;color:#888;\">3-50 &deg;C, standaard 10. Onder ongeveer 5 &deg;C bestaat vorstrisico voor de boiler</span></td>"
+    "<td class=\"control\"><input type=\"number\" name=\"bmin\" min=\"3\" max=\"50\" value=\"%d\" style=\"width:60px;\"> &deg;C</td></tr>", sww_min);
   p->printf("<tr><td class=\"label\">LDR donker-drempel (donker onder deze waarde, 0-100)</td><td class=\"control\"><input type=\"number\" name=\"ldrdark\" min=\"0\" max=\"100\" value=\"%d\" style=\"width:60px;\"></td></tr>", LDR_DARK_THRESHOLD);
   p->printf("<tr><td class=\"label\">Aantal pixels (1-30, herstart nodig)</td><td class=\"control\"><input type=\"number\" name=\"pnum\" min=\"1\" max=\"30\" value=\"%d\" style=\"width:60px;\"></td></tr>", pixels_num);
   p->printf("<tr><td class=\"label\">Google Script URL<br><span style=\"font-size:11px;color:#888;\">leeg = logging uit</span></td>"
@@ -1745,6 +1764,16 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     hyst_sww = constrain(request->getParam("hystsww")->value().toFloat(), 0.5f, 15.0f);
     preferences.putFloat("hyst_sww", hyst_sww);
   }
+  if (request->hasParam("hmin")) {   // v1.8
+    heat_min = constrain(request->getParam("hmin")->value().toInt(), 2, 25);
+    preferences.putInt("heat_min", heat_min);
+    if (heating_setpoint < heat_min) { heating_setpoint = heat_min; preferences.putInt("heat_sp", heating_setpoint); }
+  }
+  if (request->hasParam("bmin")) {   // v1.8
+    sww_min = constrain(request->getParam("bmin")->value().toInt(), 3, 50);
+    preferences.putInt("sww_min", sww_min);
+    if (boiler_setpoint < sww_min) { boiler_setpoint = sww_min; preferences.putInt("boiler_sp", boiler_setpoint); }
+  }
   if (request->hasParam("ldrdark")) {
     LDR_DARK_THRESHOLD = constrain(request->getParam("ldrdark")->value().toInt(), 0, 100);
     preferences.putInt("ldr_dk2", LDR_DARK_THRESHOLD);   // v1.7
@@ -1850,7 +1879,7 @@ void handleToggleRelayManual(AsyncWebServerRequest *request) {
 
 void handleSetSetpoint(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
-    heating_setpoint = constrain(request->getParam("value")->value().toInt(), 5, 30);
+    heating_setpoint = constrain(request->getParam("value")->value().toInt(), heat_min, 30);
     preferences.begin("sjalay-cfg", false);
     preferences.putInt("heat_sp", heating_setpoint);
     preferences.end();
@@ -1879,7 +1908,7 @@ void handleToggleRelay2Manual(AsyncWebServerRequest *request) {
 
 void handleSetBoilerSetpoint(AsyncWebServerRequest *request) {
   if (request->hasParam("value")) {
-    boiler_setpoint = constrain(request->getParam("value")->value().toInt(), 10, 60);
+    boiler_setpoint = constrain(request->getParam("value")->value().toInt(), sww_min, 60);
     preferences.begin("sjalay-cfg", false);
     preferences.putInt("boiler_sp", boiler_setpoint);
     preferences.end();
