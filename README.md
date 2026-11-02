@@ -6,9 +6,9 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.7 (`SJALAY_CONTROLLER_v1.7.ino`; map en bestand moeten dezelfde naam hebben) |
-| **Apps Script** | v1.1 (`SJALAY_SHEETS_LOGGER.gs`) |
-| **Laatst bijgewerkt** | 29 oktober 2026 |
+| **Sketch** | v1.8 (`SJALAY_CONTROLLER_v1.8.ino`; map en bestand moeten dezelfde naam hebben) |
+| **Apps Script** | v1.2 (`SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
+| **Laatst bijgewerkt** | 2 november 2026 |
 
 **Dit document heeft twee delen**
 - **Deel A, voor familie en huurders:** hoe gebruik je de verwarming, het warm water en de lampen, en wat doe je als iets niet werkt. Sectie A1 is bedoeld om door te sturen via WhatsApp.
@@ -118,6 +118,7 @@ Handgeschreven instructie van Filip (25/10/2026), in de ketelkast gestoken bij d
 - Google Drive is gekoppeld aan Claude (28/10): de volledige log kan rechtstreeks gelezen worden
 
 **Open**
+- **Toestand 2/11:** v1.7 draait stabiel (uptime 4,7 dagen, geen `INT_WDT` meer na 26/10); kamer 7,7 °C, kelder 9,0 °C, boiler 11,7 °C; HEAT en SWW zijn sinds 26/10 uit gebleven (setpoints 5 en 10 °C). DHT22 nog dood
 - **DHT22 is sinds 26/10 02:07 dood** (Temp2 en Vocht leeg, dauwpunt 0; DHT reeks 37.404 op 28/10) en komt na een software-herstart niet terug, enkel na een power cycle (zie B7). Zonder vochtmeting is de dauwpuntbeveiliging niet actief; de regeling gebruikt het setpoint
 - **Twee keer `INT_WDT`-herstart** (25/10 21:11 en 23:17): een softwarevastloper, geen brownout (zie B7)
 - "POST fouten" telt elke POST als mislukt (HTTP 400) terwijl de rijen wel binnenkomen: oorzaak bekend, oplossing in de sketch-todo (v1.5)
@@ -192,7 +193,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.7)
+## B5. De sketch (v1.8)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -200,7 +201,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 - **OTA-bestand maken (Arduino IDE 2.x):** Sketch → Export Compiled Binary, daarna enkel `SJALAY_CONTROLLER_v….ino.bin` uit de map `build/esp32.esp32.esp32c6/` uploaden via `/update`. **Niet** `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Staat Flash Size per ongeluk op 4M (zichtbaar in de compile-uitvoer als `FlashSize=4M`), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren. "Not connected" in de IDE bij het exporteren is normaal
 - **Pagina's:** `/` (landingspagina, zie A3), `/advanced` (technisch, live-refresh 3 s), `/settings`, `/update` (OTA), `/json` (live data)
 - **Endpoints:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=` (5–30 °C), `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=` (10–60 °C), `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`, beheer: `/dht_reset` (DHT22 power cycle), `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`
-- **Settings:** room-naam, Wi-Fi, static IP, mDNS-naam (a-z, 0-9, `-`), dauwpuntmarge (−10 t/m +10 °C; negatief = je neemt het vochtrisico zelf), **dauwpuntbeveiliging aan/uit** (v1.5, standaard aan), hysterese CV/SWW, LDR-drempel, aantal pixels, Google Script-URL, Sheets-interval (1–60 min, default 5), pixel-namen en Shelly-koppeling (`ip:nickname`, max 3), DS18B20-nicknames, primaire sensor (kamer), boilersensor en de rollen kelder, ketelpomp en retour (alleen meten/loggen)
+- **Settings:** room-naam, Wi-Fi, static IP, mDNS-naam (a-z, 0-9, `-`), dauwpuntmarge (−10 t/m +10 °C; negatief = je neemt het vochtrisico zelf), **dauwpuntbeveiliging aan/uit** (v1.5, standaard aan), **minimum kamer-setpoint (2–25 °C, standaard 5) en minimum boiler-setpoint (3–50 °C, standaard 10)** (v1.8, bewakingsdrempel; onder ± 5 °C bestaat vorstrisico voor de boiler), hysterese CV/SWW, LDR-drempel, aantal pixels, Google Script-URL, Sheets-interval (1–60 min, default 5), pixel-namen en Shelly-koppeling (`ip:nickname`, max 3), DS18B20-nicknames, primaire sensor (kamer), boilersensor en de rollen kelder, ketelpomp en retour (alleen meten/loggen)
 - **Verwarming (relais 1):** Auto: `effective_setpoint = max(setpoint, dauwpunt + marge)` (met dauwpuntbeveiliging uit: `= setpoint`) en symmetrische hysterese (default 1,0 °C). Geforceerd UIT bij kamer ≥ 30 °C en bij onbetrouwbare temperatuurdata. Het getal tussen haakjes naast de grote temperatuur op de landingspagina is het effectieve setpoint (`y`). Voorbeeld: setpoint 5 °C, dauwpunt 14,5 °C, marge −5 → effectief 9,5 °C (ondergrens, ook als de schuiver op 5 staat)
 - **SWW (relais 2):** setpoint 10–60 °C (default 40), hysterese default 5,0 °C. Geforceerd UIT bij boiler ≥ 60 °C of bij een defecte boilersensor
 - **Sensoren:** elke DS18B20 heeft een uniek ROM-adres. Kamer: primaire DS18B20 → terugval DHT22 → beide defect = relais 1 UIT. Een sensor geldt pas als ontbrekend na 3 mislukte lezingen. Kelder, ketelpomp en retour sturen niets: ze worden enkel getoond en gelogd (max. 6 DS18B20's). **DHT22 (v1.4):** bij uitval blijft de laatste geldige waarde gelden voor vocht en dauwpunt (zolang er sinds de start minstens één geldige meting was); na 5 mislukte lezingen opnieuw `dht.begin()`; als kamer-terugval enkel als de laatste geldige meting jonger is dan 5 min. `/advanced` toont reset-reden, opstartteller, DHT22-status en foutentellers, DS18B20- en POST-fouten
@@ -219,6 +220,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.8 (2/11) | Minimum van beide setpoints instelbaar in `/settings` (bewakingsdrempel): kamer 2–25 °C (standaard 5), boiler 3–50 °C (standaard 10). Het minimum is het laagste setpoint dat de regeling aanhoudt; de schuivers beginnen daar. Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint verhoogd. NVS-sleutels `heat_min`, `sww_min`; standaard = gedrag van v1.7. Geen Sheet-wijziging |
 | v1.7 (28/10) | LDR-schaal omgekeerd: 0 = donker, 100 = fel (`/advanced`, JSON `l`, Sheet). Donkertest `light_ldr < drempel` (pixel 0 AUTO en nacht, nu beide strikt kleiner dan). Drempel in Settings = "donker onder deze waarde", standaard 60; nieuwe NVS-sleutel `ldr_dk2`, een oude drempel (`ldr_dark`) wordt omgerekend naar 100 − oud. Apps Script blijft v1.1. Op 28/10 zijn de oudere Sheet-rijen met een hulpkolom (`100 − LDR`, daarna plakken als waarden) omgezet, dus er is geen breuk in de grafiek. Getest: logische lichtwaarden |
 | v1.6 (28/10) | Relais 3 schakelt de hele sensor-3V3-rail (PCB-snede, zie B4): tijdens de power cycle worden de DS18B20's en de LDR niet gelezen (laatste waarden blijven, geen faalteller, verwarming niet geblokkeerd); de eerste DS-lezing erna negeert de power-on-waarde 85,0 °C. Verder ongewijzigd |
 | v1.5 (28/10) | POST: redirect niet meer volgen (200/302/303 = OK); broodkruimel voor `INT_WDT`/`PANIC`; dauwpuntbeveiliging aan/uit; DHT22 power cycle via relais 3 (IO19). Apps Script blijft v1.1 |
@@ -259,12 +261,15 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `D` | Mislukte Google-POSTs sinds boot (telt nu elke POST, zie sketch-todo) | POST fouten |
 | `E` / `F` / `G` | DS18B20 kelder / ketelpomp / retour (`null` = niet toegewezen of defect) | Kelder / Ketelpomp / Retour (°C) |
 
-**Apps Script (`SJALAY_SHEETS_LOGGER.gs`)**, afgeleid van het Zarlar-roomscript (v1.5): v1.1 logt kolommen A–AH (Tijdstempel + velden hierboven, met `y` als Set en zonder `c`; ontbrekende waarden als lege cel; temperaturen met 1 decimaal en kolom A met notatie `yyyy-mm-dd hh:mm:ss` via kolomnotatie), `MAX_ROWS = 50000` (oudste rij verdwijnt bij overschrijding).
+**Apps Script (`SJALAY_SHEETS_LOGGER.gs`)**, afgeleid van het Zarlar-roomscript (v1.5): v1.2 (2/11) = v1.1 + vorstalarm per mail (zie hieronder). v1.1 logt kolommen A–AH (Tijdstempel + velden hierboven, met `y` als Set en zonder `c`; ontbrekende waarden als lege cel; temperaturen met 1 decimaal en kolom A met notatie `yyyy-mm-dd hh:mm:ss` via kolomnotatie), `MAX_ROWS = 50000` (oudste rij verdwijnt bij overschrijding).
 - **Sheet:** `*R-SJALAY_Log`, tabblad "Data" (rij 1 titel, rij 2 koppen, data vanaf rij 3)
 - **Web-app-URL (in Settings, werkend sinds 1/10):** `https://script.google.com/macros/s/AKfycby95iiPEI0Zd7wKGgo_FXL5UD9LWJ4vu3GO_RVnOFa9mlxIM8lr7NjRh6w0aTfXKiT_kg/exec`
 - **Installatie:** Sheet → Extensies → Apps Script → script plakken → `setupHeaders` eenmalig uitvoeren → Implementeren als Web-app (uitvoeren als "Ik", toegang "Iedereen") → URL in Settings → `test()` voor een proefrij. `doPost` zelf niet uitvoeren in de editor (geeft `postData` van `undefined`: dat is normaal)
 - **Update (volgorde):** code plakken en opslaan → **Implementeren → Implementaties beheren → potlood → Nieuwe versie → Implementeren** (anders blijft de web-app de oude code draaien!) → `setupHeaders()` eenmalig (voegt koppen toe en zet de notatie ook op bestaande rijen). **Nooit** "Nieuwe implementatie" (geeft een nieuwe URL en de logging stopt)
 - Bij een update van script én sketch: eerst het script, dan de sketch
+- **Vorstalarm per mail (v1.2, 2/11):** bij elke POST controleert het script kamer (`d`), boiler (`k`) en kelder (`E`). Alarm onder **3 / 4 / 2 °C**; herstelmail boven alarm + 1,5 °C; hoogstens **1 mail per 6 u** per alarm; mail naar `filip.delannoy@gmail.com` via je eigen Gmail (geen wachtwoorden op de controller). Lege of onbetrouwbare waarden (leeg of exact 0) geven geen alarm. Een uurlijkse tijd-trigger meldt **"geen data" na 3 u** (met herstelmail). De alarmcode zit in een `try/catch`: een fout daar stopt het loggen niet. Parameters bovenaan het alarmblok (`ALARM_MAIL`, `ALARM_PAUSE_H`, `NODATA_AFTER_H`, `ALARM_HYST`, `ALARM_SENSORS`). Mail komt enkel zolang de controller post.
+- **Logblad (v1.2):** het script logt naar het tabblad **"Data"** (`SHEET_NAME`), niet meer naar het actieve blad: een grafiektabblad gaf de fout "Deze actie wordt niet ondersteund voor een OBJECT-blad". Tests in de editor: `test()` (testrij; daarna verwijderen), `testMail()`, `testAlarm()` (3 alarmmails, wist daarna de toestand). `sjalayAlarmCheck` niet rechtstreeks uitvoeren (heeft de data als argument nodig).
+- **Uitrollen v1.2 (volgorde):** (1) script plakken en opslaan; (2) `testMail()` eenmalig uitvoeren (Google vraagt toestemming voor Mail, je krijgt een proefmail); (3) Implementeren → Implementaties beheren → potlood → **Nieuwe versie** → Implementeren (nooit "Nieuwe implementatie"); (4) `installTrigger()` eenmalig uitvoeren; `setupHeaders()` is niet nodig (geen nieuwe kolommen). Na tests: `resetAlarmState()` wist de alarmtoestand.
 
 ## B7. Plan en openstaande punten
 
@@ -292,8 +297,8 @@ Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, scrip
 - Alle temperatuurkolommen met 1 decimaal; kolom Set toont het effectieve setpoint; tijdstempel met notatie `yyyy-mm-dd hh:mm:ss` ✔
 - **Vijf DS18B20's:** 1 RoomSense (kamer), 2 boiler, 3 kelder, 4 ketelpomp, 5 retourleiding. Kelder is toegewezen (15,5 °C → 11,9 °C). Ketelpomp en retour blijven leeg tot de sensoren fysiek op de bus hangen (zie materiaal bij "Op locatie")
 
-**Sketch v1.7 (LDR-schaal) en v1.6 (sensorrail) — geschreven 28/10, nog te testen (OTA van thuis)**
-v1.5 draait en is getest (Firmware v1.5, "Laatste resultaat" OK (HTTP 302), POST fouten 0, Settings-veld aanwezig). v1.6 is de aanpassing voor de gedeelde sensorrail; hij heeft pas zin zodra de PCB-snede en relais 3 bedraad zijn, maar is veilig ook zonder (relais 3 is dan niet aangesloten). Installatie: `SJALAY_CONTROLLER_v1.7.ino` in de map `SJALAY_CONTROLLER_v1.7`, compileren met Flash Size 16 MB en Partition Custom, `.ino.bin` exporteren en uploaden via `/update`. Daarna controleren: Firmware v1.7, Licht in `/advanced` met "donker=0" (hand voor de LDR → waarde daalt), drempel in Settings = 60 (was 40), nachtregeling gedraagt zich als voorheen, "Laatste resultaat" = OK (HTTP 302), POST fouten blijft 0, relais 3 bedraad voor de DHT22-reset. Hardware: relais 3 (IO19) op de 4-relaismodule bedraden, NC-contact in de 3,3 V-lijn van de DHT22. De punten hieronder zijn uitgevoerd, behalve wat "nog te beslissen" is.
+**Sketch v1.8 (min. setpoints, 2/11 via OTA geflasht en getest), v1.7 (LDR-schaal, getest) en v1.6 (sensorrail)**
+v1.5 draait en is getest (Firmware v1.5, "Laatste resultaat" OK (HTTP 302), POST fouten 0, Settings-veld aanwezig). v1.6 is de aanpassing voor de gedeelde sensorrail; hij heeft pas zin zodra de PCB-snede en relais 3 bedraad zijn, maar is veilig ook zonder (relais 3 is dan niet aangesloten). Installatie: `SJALAY_CONTROLLER_v1.8.ino` in de map `SJALAY_CONTROLLER_v1.8`, compileren met Flash Size 16 MB en Partition Custom, `.ino.bin` exporteren en uploaden via `/update`. Daarna controleren: Firmware v1.8; in `/settings` staan "Minimum kamer-setpoint" (5) en "Minimum boiler-setpoint" (10); zet het kamerminimum op bv. 4 en kijk of de schuiver op de landingspagina en `/advanced` daar begint; test ook een minimum boven het huidige setpoint (het setpoint moet meegaan); Firmware v1.7-controles: Licht in `/advanced` met "donker=0" (hand voor de LDR → waarde daalt), drempel in Settings = 60 (was 40), nachtregeling gedraagt zich als voorheen, "Laatste resultaat" = OK (HTTP 302), POST fouten blijft 0, relais 3 bedraad voor de DHT22-reset. Hardware: relais 3 (IO19) op de 4-relaismodule bedraden, NC-contact in de 3,3 V-lijn van de DHT22. De punten hieronder zijn uitgevoerd, behalve wat "nog te beslissen" is.
 - [x] **Google-POST: redirect niet meer volgen.** Aanleiding (25/10): "POST fouten" loopt bij elke POST met 1 op en `/advanced` toont "Laatste resultaat: HTTP 400", terwijl alle rijen wel in de Sheet staan. Oorzaak: Apps Script verwerkt de POST en antwoordt met een doorverwijzing (302). De sketch volgt die (`HTTPC_STRICT_FOLLOW_REDIRECTS`) en stuurt een tweede verzoek naar de doorverwijs-URL, dat met 400 wordt afgewezen. De gegevens zijn dan al gelogd
   - In `postToGoogleSheets()`: `http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS)`
   - Succes = HTTP 200 of 302; alle andere codes (time-out `-11`, 4xx, 5xx) blijven een fout en tellen mee in `sheets_fail_total` (JSON `D`)
@@ -349,6 +354,11 @@ Doel: dezelfde schaal in alle controllers: **0 = donker, 100 = fel**, zodat Shee
 5. Optioneel, kortstondig en met zorg: tijdelijke brug over de 5V-PTC als diagnose (haalt de beveiliging weg).
 
 *Te onthouden:* de DHT22 is niet kapot of ongeschikt (testroom: 5 mnd goed); de oorzaak zit in de Sjalay-opstelling (voedingspad, warmte, bedrading, sketch). Eén variabele per test.
+
+**Vorstalarm per mail (aangevraagd 2/11, Apps Script v1.2 geschreven, nog uit te rollen)**
+Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldertemperatuur onder 2 °C zakt**. Aanleiding: de kamer is gezakt tot 7,7 °C en de kelder staat op 9,0 °C (2/11), en de regeling meet alleen de woonkamer. Besloten en gebouwd: grenzen kamer 3 °C, boiler 4 °C, kelder 2 °C (herstel +1,5 °C), pauze 6 u, "geen data" na 3 u; zie B6 voor de werking en het uitrollen. Geen wachtwoorden op de controller en geen sketch-wijziging. Beperking: de mail vertrekt enkel als de controller nog post (Wi-Fi/4G aan); eventueel een tweede controle "geen data sinds X uur" via een tijd-trigger. Bij het eerste gebruik vraagt Google toestemming voor Mail.
+- [x] Script v1.2 uitgerold en getest op 2/11 (test, proefmail, alarmmails, nieuwe versie, `installTrigger()`)
+- [ ] Na het uitrollen controleren: geen herstelmails/alarmmails bij normale waarden; later eventueel de kamergrens (3 °C) aanpassen aan het setpoint-minimum
 
 **Stap C — Pi, Tailscale en reservekaart**
 - Reservekaart thuis opnieuw met een ander merkkaartje (Imager met verificatie), daarna opstarttest in de Pi
