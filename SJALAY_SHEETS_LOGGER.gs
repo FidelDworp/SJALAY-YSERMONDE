@@ -1,5 +1,5 @@
 // ============================================================
-// SJALAY CONTROLLER DATA LOGGER - Google Apps Script v1.1
+// SJALAY CONTROLLER DATA LOGGER - Google Apps Script v1.2
 // Ontvangt JSON-push van de Sjalay-controller (ESP32-C6) en logt
 // naar Google Sheet. Gebaseerd op de ROOM CONTROLLER DATA LOGGER
 // (v1.5) van het Zarlar-roomproject, aangepast aan het compacte
@@ -13,10 +13,20 @@
 //                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren.
 //                 Kolom E "Set (°C)" logt voortaan het EFFECTIEVE setpoint (veld y,
 //                 1 decimaal) i.p.v. het ingestelde setpoint (veld c).
+// v1.2 (2nov26): Vorstalarm per mail (filip.delannoy@gmail.com), zie sectie "ALARM" onderaan.
+//                Bij elke POST worden kamer (d), boiler (k) en kelder (E) gecontroleerd:
+//                alarm onder 3 / 4 / 2 °C, herstelmail boven alarm + 1,5 °C, hoogstens
+//                1 mail per 6 u per alarm. Plus een uurlijkse tijd-trigger die meldt als
+//                de controller 3 u geen gegevens stuurt. Geen nieuwe kolommen en geen
+//                sketch-wijziging: setupHeaders() hoeft NIET opnieuw.
+//                Fix: logt voortaan naar het tabblad "Data" (SHEET_NAME) i.p.v. het actieve blad
+//                (een grafiekblad gaf de fout "OBJECT-blad"). Tests: testMail(), testAlarm().
+//                Eerste keer: testMail() uitvoeren (Google vraagt toestemming voor Mail),
+//                daarna nieuwe versie implementeren, daarna installTrigger() eenmalig.
 //
 // ⚠️  DEPLOYMENT INSTRUCTIE (BELANGRIJK):
 //   Gebruik bij elke update: "Implementeren" → "Implementaties beheren"
-//   → potlood-icoon (Bewerken) → versienummer verhogen → Implementeren
+//   → potlood-icoon (Bewerken) → Versie: "Nieuwe versie" → Implementeren
 //   De URL blijft dan DEZELFDE → Settings op de Sjalay-controller
 //   (Google Script-URL) hoeft niet aangepast te worden!
 //   "Nieuwe implementatie" geeft ALTIJD een nieuwe URL → logging stopt
@@ -37,6 +47,18 @@ const HEADER_ROWS = 2;     // Rij 1 = titel+URL, Rij 2 = kolomtitels
 
 const NUM_COLS = 34;       // A..AH
 
+// v1.2: vast logblad i.p.v. "het actieve blad". Een grafiekblad (OBJECT-blad) of een ander
+// tabblad dat actief is, gaf anders de fout "Deze actie wordt niet ondersteund voor een OBJECT-blad".
+const SHEET_NAME = "Data";  // naam van het tabblad met de logrijen
+function getLogSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const named = ss.getSheetByName(SHEET_NAME);
+  if (named) return named;
+  const grids = ss.getSheets().filter(function (s) { return s.getType() === SpreadsheetApp.SheetType.GRID; });
+  if (grids.length === 0) throw new Error("Geen rasterblad gevonden");
+  return grids[0];
+}
+
 // Getalnotatie per kolom (index 0 = A). 0.0 = 1 decimaal, 0 = geheel getal
 const COL_FORMATS = (function () {
   const f = [];
@@ -56,7 +78,7 @@ function blank(v) {
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const sheet = getLogSheet_();
 
     const timestamp = Utilities.formatDate(
       new Date(),
@@ -109,6 +131,9 @@ function doPost(e) {
     // Getalnotatie op de zonet toegevoegde rij (1 decimaal voor temperaturen)
     sheet.getRange(sheet.getLastRow(), 1, 1, NUM_COLS).setNumberFormats([COL_FORMATS]);
 
+    // v1.2: vorstalarm per mail; een fout hier mag het loggen nooit stoppen
+    try { sjalayAlarmCheck(data); } catch (err) { Logger.log("Alarm fout: " + err); }
+
     // MAX_ROWS bewaking: verwijder oudste datarij als limiet overschreden
     // Rij 1 = titelrij, Rij 2 = kolomtitels, datarijen starten op rij 3
     const dataRows = sheet.getLastRow() - HEADER_ROWS;
@@ -139,11 +164,139 @@ function doPost(e) {
 }
 
 
+
+// ============================================================
+// ALARM (v1.2) — vorstmail + "geen data"-melding
+//  1) sjalayAlarmCheck(data) wordt bij elke POST aangeroepen vanuit doPost.
+//     Zakt kamer/boiler/kelder onder zijn grens -> mail; hoogstens 1 per ALARM_PAUSE_H
+//     uur per alarm; boven grens + ALARM_HYST -> herstelmail.
+//  2) sjalayNoDataCheck() draait elk uur (tijd-trigger, installTrigger()) en meldt
+//     als er NODATA_AFTER_H uur geen POST was; bij nieuwe data volgt een herstelmail.
+// Lege of onbetrouwbare waarden (leeg of exact 0) geven géén alarm.
+// ============================================================
+const ALARM_MAIL     = 'filip.delannoy@gmail.com';
+const ALARM_PAUSE_H  = 6;     // uren tussen twee mails voor hetzelfde alarm
+const NODATA_AFTER_H = 3;     // uren zonder POST voordat "geen data" gemeld wordt
+const ALARM_HYST     = 1.5;   // °C boven de alarmgrens voor de herstelmelding
+const ALARM_TZ       = 'Europe/Brussels';
+
+// key = sleutel in de JSON van de controller (d = kamer, k = boiler, E = kelder)
+const ALARM_SENSORS = [
+  { id: 'kamer',  key: 'd', label: 'Kamer',  limit: 3 },
+  { id: 'boiler', key: 'k', label: 'Boiler', limit: 4 },
+  { id: 'kelder', key: 'E', label: 'Kelder', limit: 2 }
+];
+
+// ---------- hulpfuncties ----------
+function alarmNum_(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(String(v).replace(',', '.'));
+  return isFinite(n) ? n : null;
+}
+function alarmFmt_(v) { return v === null ? '—' : v.toFixed(1).replace('.', ',') + ' °C'; }
+function alarmNow_() { return Utilities.formatDate(new Date(), ALARM_TZ, 'yyyy-MM-dd HH:mm'); }
+function alarmSend_(subject, body) {
+  MailApp.sendEmail(ALARM_MAIL, subject, body);
+}
+function alarmValuesText_(vals) {
+  return ALARM_SENSORS.map(function (s) { return s.label + ': ' + alarmFmt_(vals[s.id]); }).join('\n');
+}
+
+// ---------- 1) controle bij elke POST ----------
+function sjalayAlarmCheck(data) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    props.setProperty('lastPost', String(now));
+
+    // herstel van "geen data"
+    if (props.getProperty('nodata_active') === '1') {
+      props.deleteProperty('nodata_active');
+      props.deleteProperty('nodata_last');
+      alarmSend_('✅ Sjalay stuurt weer gegevens', 'De controller stuurt weer gegevens (' + alarmNow_() + ').');
+    }
+
+    const vals = {};
+    ALARM_SENSORS.forEach(function (s) { vals[s.id] = alarmNum_(data[s.key]); });
+
+    ALARM_SENSORS.forEach(function (s) {
+      const v = vals[s.id];
+      if (v === null || v === 0) return;                      // geen betrouwbare waarde
+      const active = props.getProperty('al_' + s.id) === '1';
+      const last = Number(props.getProperty('last_' + s.id) || 0);
+      if (v < s.limit) {
+        if (!active || (now - last) >= ALARM_PAUSE_H * 3600 * 1000) {
+          alarmSend_('⚠️ Sjalay: ' + s.label + ' ' + alarmFmt_(v) + ' (grens ' + s.limit + ' °C)',
+            s.label + ' is onder ' + s.limit + ' °C gezakt (vorstgevaar).\n\n' + alarmValuesText_(vals) +
+            '\n\nTijdstip: ' + alarmNow_() + '\nVolgende mail voor dit alarm na ' + ALARM_PAUSE_H + ' uur.');
+          props.setProperty('al_' + s.id, '1');
+          props.setProperty('last_' + s.id, String(now));
+        }
+      } else if (active && v >= s.limit + ALARM_HYST) {
+        alarmSend_('✅ Sjalay: ' + s.label + ' weer ' + alarmFmt_(v),
+          s.label + ' is weer boven ' + (s.limit + ALARM_HYST).toString().replace('.', ',') + ' °C.\n\n' +
+          alarmValuesText_(vals) + '\n\nTijdstip: ' + alarmNow_());
+        props.deleteProperty('al_' + s.id);
+        props.deleteProperty('last_' + s.id);
+      }
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------- 2) "geen data"-controle (tijd-trigger, elk uur) ----------
+function sjalayNoDataCheck() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const now = Date.now();
+    const lastPost = Number(props.getProperty('lastPost') || 0);
+    if (!lastPost) { props.setProperty('lastPost', String(now)); return; }   // nog nooit data gezien: nu starten
+    const hours = (now - lastPost) / 3600000;
+    if (hours < NODATA_AFTER_H) return;
+    const active = props.getProperty('nodata_active') === '1';
+    const last = Number(props.getProperty('nodata_last') || 0);
+    if (!active || (now - last) >= ALARM_PAUSE_H * 3600 * 1000) {
+      const since = Utilities.formatDate(new Date(lastPost), ALARM_TZ, 'yyyy-MM-dd HH:mm');
+      alarmSend_('⚠️ Sjalay stuurt geen gegevens meer',
+        'Laatste gegevens ontvangen: ' + since + ' (' + Math.floor(hours) + ' uur geleden).\n' +
+        'Mogelijke oorzaken: stroom, Wi-Fi/4G, een vastgelopen controller.\n\nTijdstip: ' + alarmNow_());
+      props.setProperty('nodata_active', '1');
+      props.setProperty('nodata_last', String(now));
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------- eenmalig uit te voeren ----------
+function installTrigger() {   // maakt de uurlijkse "geen data"-trigger (verwijdert eerst een oude)
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sjalayNoDataCheck') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('sjalayNoDataCheck').timeBased().everyHours(1).create();
+}
+function testMail() {         // proefmail + vraagt eenmalig toestemming voor Mail
+  alarmSend_('Sjalay alarm: proefmail', 'Dit is een proefmail van het Sjalay-alarmscript (' + alarmNow_() + ').\n\n' +
+    'Grenzen: kamer ' + ALARM_SENSORS[0].limit + ' °C, boiler ' + ALARM_SENSORS[1].limit + ' °C, kelder ' + ALARM_SENSORS[2].limit + ' °C.');
+}
+function testAlarm() {        // simuleert kamer 2,5 / boiler 3,5 / kelder 1,5 °C: 3 alarmmails, wist daarna de toestand
+  sjalayAlarmCheck({ d: 2.5, k: 3.5, E: 1.5 });
+  resetAlarmState();
+}
+function resetAlarmState() {  // wist de alarmtoestand (na tests)
+  PropertiesService.getScriptProperties().deleteAllProperties();
+}
+
 // ============================================================
 // SETUP — voer eenmalig uit via Uitvoeren → setupHeaders
 // ============================================================
 function setupHeaders() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const sheet = getLogSheet_();
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
 
   // --- Verwijder bestaande koprijen als aanwezig ---
@@ -167,7 +320,7 @@ function setupHeaders() {
   // --- Rij 1: Titelrij met scriptnaam en sheet-URL ---
   sheet.insertRowBefore(1);
   const titleCell = sheet.getRange(1, 1);
-  titleCell.setValue("SJALAY CONTROLLER DATA LOGGER v1.1  |  " + ss.getUrl());
+  titleCell.setValue("SJALAY CONTROLLER DATA LOGGER v1.2  |  " + ss.getUrl());
   titleCell.setFontSize(9);
   titleCell.setFontWeight("normal");
   titleCell.setFontStyle("italic");
