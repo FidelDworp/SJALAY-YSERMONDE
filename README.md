@@ -6,8 +6,9 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.8 (`SJALAY_CONTROLLER_v1.8.ino`; map en bestand moeten dezelfde naam hebben) |
-| **Apps Script** | v1.2 (`SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
+| **Sketch** | v1.8, map `ESP32-C6_SJALAY_CONTROLLER/` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
+| **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
 
 **Dit document heeft twee delen**
@@ -198,7 +199,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 De code is de bron van waarheid; dit is een leeswijzer.
 
 - **Board:** ESP32C6 Dev Module, **Flash Size 16 MB**, Partition Custom (`partitions.csv`), USB CDC On Boot Enabled. `#define Serial Serial0` bovenaan is verplicht op de C6. Versie in `SJALAY_VERSION` (onderaan `/advanced`)
-- **OTA-bestand maken (Arduino IDE 2.x):** Sketch → Export Compiled Binary, daarna enkel `SJALAY_CONTROLLER_v….ino.bin` uit de map `build/esp32.esp32.esp32c6/` uploaden via `/update`. **Niet** `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Staat Flash Size per ongeluk op 4M (zichtbaar in de compile-uitvoer als `FlashSize=4M`), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren. "Not connected" in de IDE bij het exporteren is normaal
+- **OTA-bestand maken (Arduino IDE 2.x):** Sketch → Export Compiled Binary, daarna enkel `ESP32-C6_SJALAY_CONTROLLER.ino.bin` uit de map `build/esp32.esp32.esp32c6/` uploaden via `/update`. **Niet** `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Staat Flash Size per ongeluk op 4M (zichtbaar in de compile-uitvoer als `FlashSize=4M`), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren. "Not connected" in de IDE bij het exporteren is normaal
 - **Pagina's:** `/` (landingspagina, zie A3), `/advanced` (technisch, live-refresh 3 s), `/settings`, `/update` (OTA), `/json` (live data)
 - **Endpoints:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=` (5–30 °C), `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=` (10–60 °C), `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`, beheer: `/dht_reset` (DHT22 power cycle), `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`
 - **Settings:** room-naam, Wi-Fi, static IP, mDNS-naam (a-z, 0-9, `-`), dauwpuntmarge (−10 t/m +10 °C; negatief = je neemt het vochtrisico zelf), **dauwpuntbeveiliging aan/uit** (v1.5, standaard aan), **minimum kamer-setpoint (2–25 °C, standaard 5) en minimum boiler-setpoint (3–50 °C, standaard 10)** (v1.8, bewakingsdrempel; onder ± 5 °C bestaat vorstrisico voor de boiler), hysterese CV/SWW, LDR-drempel, aantal pixels, Google Script-URL, Sheets-interval (1–60 min, default 5), pixel-namen en Shelly-koppeling (`ip:nickname`, max 3), DS18B20-nicknames, primaire sensor (kamer), boilersensor en de rollen kelder, ketelpomp en retour (alleen meten/loggen)
