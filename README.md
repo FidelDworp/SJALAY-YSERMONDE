@@ -6,7 +6,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.8, map `ESP32-C6_SJALAY_CONTROLLER/` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Sketch** | v1.8, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
 | **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
