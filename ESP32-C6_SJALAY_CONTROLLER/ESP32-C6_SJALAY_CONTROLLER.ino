@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.8 — 2 nov 2026
+// SJALAY CONTROLLER — v1.9 — 10 nov 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -7,7 +7,9 @@
 // PARTITIETABEL: Compileer met "partitions.csv" (16 MB) in de schetsmap:
 //   nvs (20 KB) / otadata (8 KB) / app0 (6 MB) / app1 (6 MB) / spiffs (~3,9 MB)
 // Arduino IDE: Board = ESP32C6 Dev Module, Flash Size = 16MB,
-//              Partition Scheme = Custom (partitions.csv), USB CDC On Boot = Enabled
+//              Partition Scheme = Custom (partitions.csv), USB CDC On Boot = DISABLED (sinds v1.9)
+//              Seriële monitor en flashen via de USB-C-poort "UART" (115200 baud); de poort
+//              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
 // ----------------------------------------------------------------------------
 // v1.0 (1okt26): Eerste opgekuiste release — volledige versiegeschiedenis (v0.1-v0.16)
@@ -128,6 +130,19 @@
 //                  Maximum blijft 30 °C (kamer) en 60 °C (boiler).
 //                - Geen nieuwe Sheet-kolommen, Apps Script blijft v1.1.
 // ----------------------------------------------------------------------------
+// v1.9 (10nov26): USB-PINNEN VRIJ (stap 1 van 3 voor de SCD41, zie README §B7 Stap D).
+//                IO12/IO13 zijn op de ESP32-C6 de datalijnen D-/D+ van de ingebouwde USB
+//                (USB-serieel/JTAG). Het shield gebruikt IO13 als I2C-SDA (SCL = IO11), dus de USB
+//                moet die pinnen loslaten — zelfde oplossing als ROOM v3.4.2:
+//                (1) compileren met USB CDC On Boot = Disabled -> Serial = UART0 = poort "UART";
+//                    compileren met CDC aan geeft voortaan een foutmelding;
+//                (2) bij het opstarten de USB-functie van IO12/IO13 uitschakelen (pad + interne
+//                    pull-ups uit): releaseUsbPins(), als eerste stap in setup().
+//                Verder NIETS gewijzigd: geen I2C, geen SCD41, /json, Settings en Sheet zoals v1.8
+//                (Apps Script blijft v1.2). Test: alles werkt zoals in v1.8.
+//                Technisch: voorwaartse declaratie van getJSON() bovenaan, zodat de sketch ook
+//                compileert zonder automatische prototypes.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -143,13 +158,28 @@
 #include <nvs.h>
 #include <nvs_flash.h>
 #include <DHT.h>
+#include "hal/usb_serial_jtag_ll.h"  // v1.9: USB-functie van IO12/IO13 uitschakelen
+
+// v1.9: IO12/IO13 (USB D-/D+) zijn op het shield gewone pinnen (IO13 = I2C SDA). Met USB CDC aan kan dat niet.
+#if ARDUINO_USB_CDC_ON_BOOT
+#error "SJALAY v1.9+: zet in de Arduino IDE Tools -> USB CDC On Boot op Disabled (seriele monitor via de poort UART)"
+#endif
+
+// v1.9: maak IO12/IO13 los van de ingebouwde USB-PHY (pad uit, interne pull-ups uit)
+void releaseUsbPins() {
+  usb_serial_jtag_pull_override_vals_t none = {};   // dp_pu = dp_pd = dm_pu = dm_pd = false
+  usb_serial_jtag_ll_phy_enable_pull_override(&none);
+  usb_serial_jtag_ll_phy_enable_pad(false);
+}
+
+String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de definitie verderop)
 #include <OneWireNg_CurrentPlatform.h>  // C6-compatibel 1-Wire (vervangt OneWire+DallasTemperature)
 #include <Adafruit_NeoPixel.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.8"
+#define SJALAY_VERSION "1.9"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -2035,6 +2065,7 @@ void handleOtaPage(AsyncWebServerRequest *request) {
 // ============== SETUP ==============
 void setup() {
   Serial.begin(115200);
+  releaseUsbPins();   // v1.9: IO12/IO13 vrij voor het shield (IO13 = I2C SDA)
   delay(1500);
   while (Serial.available()) Serial.read();
 

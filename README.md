@@ -6,8 +6,8 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.8, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
-| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.8.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Alleen de laatste versie |
+| **Sketch** | v1.9, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.9.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Alleen de laatste versie; `v1.8.ino.bin` blijft staan als terugvaloptie tot v1.9 getest is |
 | **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
@@ -195,11 +195,11 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.8)
+## B5. De sketch (v1.9)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
-- **Board:** ESP32C6 Dev Module, **Flash Size 16 MB**, Partition Custom (`partitions.csv`), USB CDC On Boot Enabled. `#define Serial Serial0` bovenaan is verplicht op de C6. Versie in `SJALAY_VERSION` (onderaan `/advanced`)
+- **Board:** ESP32C6 Dev Module, **Flash Size 16 MB**, Partition Custom (`partitions.csv`), **USB CDC On Boot Disabled** (sinds v1.9: IO12/IO13 zijn dan gewone pinnen, IO13 = I2C-SDA; met CDC aan stopt het compileren met een foutmelding). Seriële monitor en flashen enkel via de USB-C-poort "UART"; normaal alles via OTA. Versie in `SJALAY_VERSION` (onderaan `/advanced`)
 - **OTA-bestand maken (Arduino IDE 2.x):** Sketch → Export Compiled Binary, daarna enkel `ESP32-C6_SJALAY_CONTROLLER.ino.bin` uit de map `build/esp32.esp32.esp32c6/` uploaden via `/update`. **Niet** `.bootloader.bin`, `.partitions.bin` of `.merged.bin`. Staat Flash Size per ongeluk op 4M (zichtbaar in de compile-uitvoer als `FlashSize=4M`), dan kan de OTA mislukken: eerst op 16 MB zetten en opnieuw exporteren. "Not connected" in de IDE bij het exporteren is normaal
 - **Pagina's:** `/` (landingspagina, zie A3), `/advanced` (technisch, live-refresh 3 s), `/settings`, `/update` (OTA), `/json` (live data)
 - **Endpoints:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=` (5–30 °C), `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=` (10–60 °C), `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`, beheer: `/dht_reset` (DHT22 power cycle), `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`
@@ -222,6 +222,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.9 (10/11) | USB-pinnen vrij (stap 1 van 3 voor de SCD41): compileren met USB CDC On Boot = Disabled en `releaseUsbPins()` bij het opstarten, zodat IO12/IO13 los zijn van de ingebouwde USB (zoals ROOM v3.4.2). Verder niets gewijzigd: `/json`, Settings en Sheet zoals v1.8 |
 | v1.8 (2/11) | Minimum van beide setpoints instelbaar in `/settings` (bewakingsdrempel): kamer 2–25 °C (standaard 5), boiler 3–50 °C (standaard 10). Het minimum is het laagste setpoint dat de regeling aanhoudt; de schuivers beginnen daar. Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint verhoogd. NVS-sleutels `heat_min`, `sww_min`; standaard = gedrag van v1.7. Geen Sheet-wijziging |
 | v1.7 (28/10) | LDR-schaal omgekeerd: 0 = donker, 100 = fel (`/advanced`, JSON `l`, Sheet). Donkertest `light_ldr < drempel` (pixel 0 AUTO en nacht, nu beide strikt kleiner dan). Drempel in Settings = "donker onder deze waarde", standaard 60; nieuwe NVS-sleutel `ldr_dk2`, een oude drempel (`ldr_dark`) wordt omgerekend naar 100 − oud. Apps Script blijft v1.1. Op 28/10 zijn de oudere Sheet-rijen met een hulpkolom (`100 − LDR`, daarna plakken als waarden) omgezet, dus er is geen breuk in de grafiek. Getest: logische lichtwaarden |
 | v1.6 (28/10) | Relais 3 schakelt de hele sensor-3V3-rail (PCB-snede, zie B4): tijdens de power cycle worden de DS18B20's en de LDR niet gelezen (laatste waarden blijven, geen faalteller, verwarming niet geblokkeerd); de eerste DS-lezing erna negeert de power-on-waarde 85,0 °C. Verder ongewijzigd |
@@ -366,7 +367,7 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
 Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code is gebaseerd op de SCD41-code van de ROOM-sketch (repo `ESP32C6_ROOMS`). Alles wordt vooraf via OTA geflasht met de SCD41 **standaard uit**: ter plaatse enkel de sensor aansluiten en aanvinken in `/settings`.
 
 Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
-- **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8
+- **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Code en `.bin` klaar (10/11), OTA en test door Filip nog te doen*
 - **v1.10** — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
 - **v1.11** — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
 - Terugvallen kan altijd door de vorige `.bin` via `/update` te zetten

@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "runtime.tools.ctags.path=/home/claude/tools/noctags",
+  "fqbn": "esp32:esp32:esp32c6:FlashSize=16M,PartitionScheme=custom,CDCOnBoot=default",
+  "hardwareFolders": "/root/.arduino15/packages",
+  "otherLibrariesFolders": "/root/Arduino/libraries",
+  "sketchLocation": "/home/claude/sjalay-ysermonde/ESP32-C6_SJALAY_CONTROLLER"
+}
