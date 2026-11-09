@@ -362,8 +362,14 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
 - [x] Script v1.2 uitgerold en getest op 2/11 (test, proefmail, alarmmails, nieuwe versie, `installTrigger()`)
 - [ ] Na het uitrollen controleren: geen herstelmails/alarmmails bij normale waarden; later eventueel de kamergrens (3 °C) aanpassen aan het setpoint-minimum
 
-**Stap D — SCD41: CO2 + reserve voor vocht en dauwpunt (gevraagd door Filip 9/11, nog te plannen)**
-Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code komt uit de ROOM-sketch v3.4.3 (repo `ESP32C6_ROOMS`), pas **na de geslaagde 24 u-test daar**. Werk in een Sjalay-gesprek; eerst een plan, code pas na GO.
+**Stap D — SCD41: CO2 + reserve voor vocht en dauwpunt (gevraagd door Filip 9/11, plan goedgekeurd 9/11)**
+Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code is gebaseerd op de SCD41-code van de ROOM-sketch (repo `ESP32C6_ROOMS`). Alles wordt vooraf via OTA geflasht met de SCD41 **standaard uit**: ter plaatse enkel de sensor aansluiten en aanvinken in `/settings`.
+
+Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
+- **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8
+- **v1.10** — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
+- **v1.11** — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
+- Terugvallen kan altijd door de vorige `.bin` via `/update` te zetten
 - [ ] **USB-pinnen vrijmaken (verplicht):** I2C zit op IO13 (SDA) / IO11 (SCL), en IO13 is op de ESP32-C6 de USB-lijn D+. Zoals ROOM v3.4.2: compileren met **USB CDC On Boot = Disabled** en bij het opstarten de USB-functie van IO12/IO13 uitschakelen. `#define Serial Serial0` kan dan weg (Serial = UART0). Seriële monitor en flashen enkel nog via de poort "UART" (de Sjalay wordt toch via OTA bediend)
 - [ ] **SCD41-code overnemen uit ROOM:** niet-blokkerend lezen (elke 5 s), "ontbreekt" na 3 fouten of 60 s, elke minuut opnieuw proberen, Diagnose met mislukte stap en I2C-scan; `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm)
 - [ ] **CO2 tonen en loggen:** op `/advanced` (en eventueel de landingspagina); nieuwe `/json`-keys (achteraan, namen nog af te spreken) en nieuwe kolommen in `SJALAY_SHEETS_LOGGER.gs` (nieuwe scriptversie, bestaande implementatie bewerken)

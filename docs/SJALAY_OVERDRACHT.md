@@ -28,7 +28,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
-3. **SCD41 toevoegen (gevraagd 9/11):** CO2 tonen en loggen + reserve voor vocht en dauwpunt als de DHT22 uitvalt. Code uit ROOM v3.4.3 overnemen na de 24 u-test daar; vereist CDC On Boot = Disabled en IO12/IO13 los van de USB (zie README §B7 Stap D).
+3. **SCD41 toevoegen (plan goedgekeurd 9/11):** CO2 tonen en loggen + reserve voor vocht en dauwpunt als de DHT22 uitvalt. Vooraf via OTA, SCD41 standaard uit; ter plaatse enkel aanvinken. Volgorde: **v1.9** USB-pinnen vrij → **v1.10** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.11** reserve vocht/dauwpunt + key `I`, elk met testperiode. Details: README §B7 Stap D. Volgende actie: v1.9 (na GO).
 4. Zie README §B7 voor het volledige plan.
 
 ## 4. Praktisch
