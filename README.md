@@ -362,6 +362,14 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
 - [x] Script v1.2 uitgerold en getest op 2/11 (test, proefmail, alarmmails, nieuwe versie, `installTrigger()`)
 - [ ] Na het uitrollen controleren: geen herstelmails/alarmmails bij normale waarden; later eventueel de kamergrens (3 °C) aanpassen aan het setpoint-minimum
 
+**Stap D — SCD41: CO2 + reserve voor vocht en dauwpunt (gevraagd door Filip 9/11, nog te plannen)**
+Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code komt uit de ROOM-sketch v3.4.3 (repo `ESP32C6_ROOMS`), pas **na de geslaagde 24 u-test daar**. Werk in een Sjalay-gesprek; eerst een plan, code pas na GO.
+- [ ] **USB-pinnen vrijmaken (verplicht):** I2C zit op IO13 (SDA) / IO11 (SCL), en IO13 is op de ESP32-C6 de USB-lijn D+. Zoals ROOM v3.4.2: compileren met **USB CDC On Boot = Disabled** en bij het opstarten de USB-functie van IO12/IO13 uitschakelen. `#define Serial Serial0` kan dan weg (Serial = UART0). Seriële monitor en flashen enkel nog via de poort "UART" (de Sjalay wordt toch via OTA bediend)
+- [ ] **SCD41-code overnemen uit ROOM:** niet-blokkerend lezen (elke 5 s), "ontbreekt" na 3 fouten of 60 s, elke minuut opnieuw proberen, Diagnose met mislukte stap en I2C-scan; `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm)
+- [ ] **CO2 tonen en loggen:** op `/advanced` (en eventueel de landingspagina); nieuwe `/json`-keys (achteraan, namen nog af te spreken) en nieuwe kolommen in `SJALAY_SHEETS_LOGGER.gs` (nieuwe scriptversie, bestaande implementatie bewerken)
+- [ ] **Reserve voor vocht en dauwpunt:** valt de DHT22 weg (de bestaande DHT-monitoring beslist dat), dan rekenen vocht en dauwpunt met de **SCD41-waarden** in plaats van "laatste geldige waarde". De bron (DHT22 of SCD41) zichtbaar op `/advanced` en in de log; de dauwpuntbeveiliging blijft zo actief
+- [ ] **Hardware op locatie:** SCD41 (GY-SCD41) op de I2C-header van het shield (SDA–SCL–GND–3V3; de header zit vóór de PCB-snede en blijft dus gevoed tijdens een power cycle van de sensorrail), minstens 10–20 cm van de controller; draadkleuren doormeten, nooit op 5 V
+
 **Stap C — Pi, Tailscale en reservekaart**
 - Reservekaart thuis opnieuw met een ander merkkaartje (Imager met verificatie), daarna opstarttest in de Pi
 - **Tailscale Funnel voor familie** (KISS): `Tailscale Funnel` → **Caddy** op de Pi (poort 8080) → controller `192.168.50.10`. Eén gedeeld familiewachtwoord (basic auth); enkel `/` en de gebruikers-endpoints (`/json`, `/toggle_*`, `/set_*`, `/setcolor`) worden doorgelaten; `/advanced`, `/settings`, `/update`, `/save_settings`, `/factory_reset`, `/reboot`, `/rescan_ds`, `/clear_crash_log`, `/capabilities` worden geblokkeerd (404). Huurders krijgen enkel de lokale URL. Stappen: Caddy installeren, `Caddyfile`, `tailscale funnel --bg 8080`, testen vanaf mobiele data
@@ -380,6 +388,7 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
   - Ook meebrengen: een stukje 2-aderige kabel met SM-connector (man en vrouw) voor het geval de bestaande connector vervangen moet worden
 - [ ] **Meten met de mini-scoop** (single shot, trigger op een val onder ± 3,2 V): (1) de 3,3 V-lijn aan de DHT22-pin, (2) de datalijn IO6 met de 10 kΩ pull-up tijdens een uitval (hangt hij permanent laag?) en tijdens een leescyclus (storing van relais of ketel), (3) de 5 V-ingang van de ESP32 onder belasting, ook tijdens het opstarten en Wi-Fi-zenden. Ook de kabel en de pull-up van de DHT22 controleren
 - [ ] **Test (ook voor vertrek):** VCC van de 4-relaismodule loskoppelen (relais vallen af, CV/SWW tijdelijk uit), controller kort stroomloos zetten, na 2–3 min `f` in `/json` bekijken. DHT22 blijft werken → oorzaak is de relaismodule (aparte 5 V-voeding of betere voedingsverdeling). Valt hij weg → relaismodule uitsluiten en verder meten. Module daarna weer aansluiten. Mogelijke oorzaken in volgorde: **onderdimensioneerde voeding** (VOLTCRAFT USPS-600, max. 0,6 A, lange dunne kabel), zakkende 3,3 V-lijn bij Wi-Fi-zending, 4-relaismodule, storing van de ketel op de kabels
+- [ ] **SCD41 meebrengen** (GY-SCD41 + kabeltje met Dupont-stekker naar de I2C-header) en plaatsen: zie Stap D
 - [ ] **Materiaal (extra DS18B20's):** 2 waterdichte DS18B20, een verbindingsprintje om ze parallel te schakelen bij de boilersensor, 2 isolatiestrips voor op de buizen, soldeergerief en klein materiaal (krimpkousen, tie-wraps, draad)
 
 **Later**
