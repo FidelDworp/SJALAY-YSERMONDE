@@ -22,7 +22,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 
 - v1.7/v1.8 draaien stabiel (op 2/11: 4,7 dagen uptime, geen `INT_WDT` meer na 26/10).
 - **DHT22 dood sinds 26/10 02:07.** Opvallend: de `INT_WDT`-herstarts (25/10) stopten rond hetzelfde moment. Dezelfde herstarts gebeurden op room80 (ROOM v3.2, 5–7/11): de DHT22-uitlezing is een verdachte. ROOM v3.3 heeft daarom een "laatste stap" in Diagnose; de Sjalay heeft sinds v1.5 een vergelijkbare broodkruimel (`INT_WDT@<fase>` in de reset-reden).
-- De Sjalay is de bron van de "goodies" voor ROOM v3.6/v3.7 (temperatuurbewaking, verwarmingslogica; planning 9/11).
+- De Sjalay is de bron van de "goodies" voor ROOM v3.7/v3.8 (temperatuurbewaking, verwarmingslogica; planning 9/11).
 
 ## 3. Open punten
 
