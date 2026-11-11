@@ -375,7 +375,7 @@ Op room80 is bewezen (10/11, Diagnose "laatste stap: DHT22 lezen") dat de **Adaf
 Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code is gebaseerd op de SCD41-code van de ROOM-sketch (repo `ESP32C6_ROOMS`). Alles wordt vooraf via OTA geflasht met de SCD41 **standaard uit**: ter plaatse enkel de sensor aansluiten en aanvinken in `/settings`.
 
 Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
-- **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Code en `.bin` klaar (10/11), OTA en test door Filip nog te doen*
+- **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Via OTA geflasht 11/11 ±11:04 (draait); eerste browser-upload mislukte, pas gelukt na `/reboot` (vastgelopen update-toestand, zie v1.10). Test loopt*
 - **v1.10 / v1.11** — Stap E (DHT22-uitlezing, NVS), zie hierboven
 - **v1.12** (was v1.10, verschoven door Stap E) — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
 - **v1.13** (was v1.11) — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
