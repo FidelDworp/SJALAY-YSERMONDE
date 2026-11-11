@@ -158,6 +158,12 @@
 //                (3) /advanced, Controller: "NVS-geheugen" met vakjes gebruikt/totaal/vrij en de
 //                    bezetting per naamruimte; naamruimtes die niet van deze sketch of het systeem zijn,
 //                    krijgen "(niet van deze sketch)". Enkel tonen, niets wissen.
+//                (4) OTA robuuster (les van 11/11: een halverwege afgebroken upload liet de update
+//                    "bezig" staan, zodat elke volgende upload faalde tot een /reboot):
+//                    - een nog lopende/vastgelopen update wordt bij een nieuwe upload eerst afgebroken;
+//                    - "Update mislukt!" toont voortaan de reden (bv. "Not Enough Space", "Abort");
+//                    - herstart pas 3 s na "Update OK" (vanuit loop(), niet meer met delay() in de
+//                      webserver-taak), zodat het antwoord ook via 4G/Tailscale aankomt.
 //                /json-keys, Settings en Sheet ongewijzigd (Apps Script blijft v1.2).
 // ----------------------------------------------------------------------------
 
@@ -189,6 +195,11 @@ void releaseUsbPins() {
   usb_serial_jtag_ll_phy_enable_pull_override(&none);
   usb_serial_jtag_ll_phy_enable_pad(false);
 }
+
+// v1.10: OTA-toestand
+char ota_err[64] = "";                 // eerste foutmelding van de laatste upload
+bool ota_done = false;                  // laatste upload correct afgerond (Update.end OK)
+volatile unsigned long ota_restart_at = 0;   // millis() waarop herstart moet volgen (0 = geen)
 
 String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de definitie verderop)
 #include <OneWireNg_CurrentPlatform.h>  // C6-compatibel 1-Wire (vervangt OneWire+DallasTemperature)
@@ -2372,23 +2383,46 @@ void setup() {
   server.on("/update", HTTP_GET, handleOtaPage);
   server.on("/update", HTTP_POST,
     [](AsyncWebServerRequest *request) {
-      bool ok = !Update.hasError();
-      AsyncWebServerResponse *response = request->beginResponse(200, "text/html",
-        ok ? "<h2>Update OK — herstart...</h2>" : "<h2 style='color:#f00'>Update mislukt!</h2><a href='/update'>Terug</a>");
+      // v1.10: enkel OK als de update echt afgerond is; anders de reden tonen
+      bool ok = ota_done && ota_err[0] == 0;
+      String body;
+      if (ok) {
+        body = "<h2>Update OK — herstart over 3 s...</h2>";
+        ota_restart_at = millis() + 3000UL;   // v1.10: herstart vanuit loop()
+      } else {
+        if (ota_err[0] == 0) strlcpy(ota_err, Update.hasError() ? Update.errorString() : "upload onvolledig", sizeof(ota_err));
+        body = String("<h2 style='color:#f00'>Update mislukt!</h2><p>Reden: ") + ota_err + "</p><a href='/update'>Terug</a>";
+        if (Update.isRunning()) Update.abort();   // v1.10: niet laten vastlopen
+      }
+      AsyncWebServerResponse *response = request->beginResponse(200, "text/html", body);
       response->addHeader("Connection", "close");
       request->send(response);
-      if (ok) { delay(500); ESP.restart(); }
     },
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
       if (!index) {
         Serial.printf("[OTA] Start: %s\n", filename.c_str());
         setStage(STG_OTA);
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+        ota_err[0] = 0;
+        ota_done = false;
+        if (Update.isRunning()) {            // v1.10: vorige (afgebroken) upload opruimen
+          Serial.println("[OTA] vorige update hing nog -> afgebroken");
+          Update.abort();
+        }
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+          Update.printError(Serial);
+          snprintf(ota_err, sizeof(ota_err), "start mislukt: %s", Update.errorString());
+        }
       }
-      if (Update.write(data, len) != len) Update.printError(Serial);
-      if (final) {
-        if (Update.end(true)) Serial.printf("[OTA] Klaar: %u bytes\n", (unsigned)(index + len));
-        else Update.printError(Serial);
+      if (ota_err[0] == 0 && Update.write(data, len) != len) {
+        Update.printError(Serial);
+        snprintf(ota_err, sizeof(ota_err), "schrijven mislukt: %s", Update.errorString());
+      }
+      if (final && ota_err[0] == 0) {
+        if (Update.end(true)) { ota_done = true; Serial.printf("[OTA] Klaar: %u bytes\n", (unsigned)(index + len)); }
+        else {
+          Update.printError(Serial);
+          snprintf(ota_err, sizeof(ota_err), "afronden mislukt: %s", Update.errorString());
+        }
       }
     });
 
@@ -2407,6 +2441,11 @@ void setup() {
 
 // ============== LOOP ==============
 void loop() {
+  if (ota_restart_at && (long)(millis() - ota_restart_at) >= 0) {   // v1.10: herstart na geslaagde OTA
+    Serial.println("[OTA] herstart");
+    delay(100);
+    ESP.restart();
+  }
   setStage(STG_WIFI);
   if (ap_mode_active) {
     dnsServer.processNextRequest();
