@@ -29,7 +29,8 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
 3. **SCD41 toevoegen (plan goedgekeurd 9/11):** CO2 tonen en loggen + reserve voor vocht en dauwpunt als de DHT22 uitvalt. Vooraf via OTA, SCD41 standaard uit; ter plaatse enkel aanvinken. Volgorde: **v1.9** USB-pinnen vrij → **v1.10** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.11** reserve vocht/dauwpunt + key `I`, elk met testperiode. Details: README §B7 Stap D. **v1.9 klaar (10/11), wacht op OTA en test**; daarna v1.10 (na GO).
-4. Zie README §B7 voor het volledige plan.
+4. **Stap E (11/11, voorrang): eigen DHT22-uitlezing** uit ROOM v3.4.4 overnemen (de Adafruit-bibliotheek veroorzaakt de `INT_WDT`-herstarts) en NVS nakijken op Matter-resten (ROOM v3.4.5); daarna van op afstand herstarten. Een vastgelopen DHT22 komt pas terug na een echte power cycle: relais 3 + PCB-snede of een slimme stekker (te beslissen). README §B7 Stap E.
+5. Zie README §B7 voor het volledige plan.
 
 ## 4. Praktisch
 

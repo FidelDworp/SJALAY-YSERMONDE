@@ -363,6 +363,13 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
 - [x] Script v1.2 uitgerold en getest op 2/11 (test, proefmail, alarmmails, nieuwe versie, `installTrigger()`)
 - [ ] Na het uitrollen controleren: geen herstelmails/alarmmails bij normale waarden; later eventueel de kamergrens (3 °C) aanpassen aan het setpoint-minimum
 
+**Stap E — lessen uit ROOM v3.4.4/v3.4.5 (11/11): DHT22-uitlezing en NVS — voorrang op de rest van Stap D**
+Op room80 is bewezen (10/11, Diagnose "laatste stap: DHT22 lezen") dat de **Adafruit-DHT-bibliotheek** de `INT_WDT`-herstarts veroorzaakt: ze zet de interrupts uit en wacht per flank tot "160 000 lussen", zonder te stoppen bij een fout. Hapert de DHT22, dan staan de interrupts seconden uit; de C6 heeft één kern → interrupt-watchdog. Dat past bij de `INT_WDT`-herstarts van 25/10, die stopten toen de DHT22 op 26/10 helemaal zweeg (dan faalt de bibliotheek meteen bij de eerste flank). Zie ook de lessen in de overkoepelende overdracht.
+- [ ] **Eigen DHT22-uitlezing** `dhtRead22()` uit ROOM v3.4.4 overnemen (max. 100 µs per flank, stoppen bij de eerste fout, interrupts hooguit ±5 ms uit); `#include <DHT.h>`, `dht.begin()` en `dht.read…()` weg. De DHT-monitoring en de power cycle via relais 3 blijven, met de nieuwe functie
+- [ ] **NVS nakijken:** NVS per naamruimte in `/advanced` (zoals ROOM v3.4.5); staan er oude Matter-resten (`CHIP_KVS`, `esp_matter_kvs`, `chip-*`, `nimble_bond`), dan wissen. Een volle NVS bewaart instellingen stilletjes niet meer
+- [ ] **Van op afstand:** na de OTA-update `/reboot` en kijken of de DHT22 antwoordt. **Verwachting:** de nieuwe uitlezing voorkomt de herstarts, maar maakt een vastgelopen DHT22 niet wakker (een softwareherstart deed dat ook in oktober niet). Daarvoor blijft een **echte power cycle** nodig
+- [ ] **Power cycle van op afstand blijft dus nodig** (te beslissen): relais 3 + PCB-snede (sketch klaar sinds v1.6), of eenvoudiger een **slimme stekker** (bv. Shelly Plug) op de voeding van de controller, die de hele controller (ook de DHT22) uit en aan zet
+
 **Stap D — SCD41: CO2 + reserve voor vocht en dauwpunt (gevraagd door Filip 9/11, plan goedgekeurd 9/11)**
 Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code is gebaseerd op de SCD41-code van de ROOM-sketch (repo `ESP32C6_ROOMS`). Alles wordt vooraf via OTA geflasht met de SCD41 **standaard uit**: ter plaatse enkel de sensor aansluiten en aanvinken in `/settings`.
 
