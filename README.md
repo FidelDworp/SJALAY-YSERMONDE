@@ -6,8 +6,8 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.9, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
-| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.9.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Alleen de laatste versie; `v1.8.ino.bin` blijft staan als terugvaloptie tot v1.9 getest is |
+| **Sketch** | v1.10, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.10.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken; DHT-bibliotheek niet meer nodig sinds v1.10). Normaal alleen de laatste versie; tijdelijk staan ook `v1.9` (eerst te testen) en `v1.8` (terugvaloptie) erbij, tot v1.10 getest is |
 | **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
@@ -195,7 +195,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.9)
+## B5. De sketch (v1.10)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -222,6 +222,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.10 (11/11) | Eigen DHT22-uitlezing `dhtRead22()` (uit ROOM v3.4.4) i.p.v. de Adafruit-bibliotheek, die de interrupts seconden kon uitzetten (oorzaak van de `INT_WDT`-herstarts van 25/10); interrupts nu hooguit ±5 ms uit. Teller "fouten op rij" (`B`) 32-bit (bleef op 65535 steken en gaf dan bij elke lezing een herinit). `/advanced` → Controller: NVS-bezetting per naamruimte (enkel tonen). `/json`, Settings en Sheet ongewijzigd |
 | v1.9 (10/11) | USB-pinnen vrij (stap 1 van 3 voor de SCD41): compileren met USB CDC On Boot = Disabled en `releaseUsbPins()` bij het opstarten, zodat IO12/IO13 los zijn van de ingebouwde USB (zoals ROOM v3.4.2). Verder niets gewijzigd: `/json`, Settings en Sheet zoals v1.8 |
 | v1.8 (2/11) | Minimum van beide setpoints instelbaar in `/settings` (bewakingsdrempel): kamer 2–25 °C (standaard 5), boiler 3–50 °C (standaard 10). Het minimum is het laagste setpoint dat de regeling aanhoudt; de schuivers beginnen daar. Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint verhoogd. NVS-sleutels `heat_min`, `sww_min`; standaard = gedrag van v1.7. Geen Sheet-wijziging |
 | v1.7 (28/10) | LDR-schaal omgekeerd: 0 = donker, 100 = fel (`/advanced`, JSON `l`, Sheet). Donkertest `light_ldr < drempel` (pixel 0 AUTO en nacht, nu beide strikt kleiner dan). Drempel in Settings = "donker onder deze waarde", standaard 60; nieuwe NVS-sleutel `ldr_dk2`, een oude drempel (`ldr_dark`) wordt omgerekend naar 100 − oud. Apps Script blijft v1.1. Op 28/10 zijn de oudere Sheet-rijen met een hulpkolom (`100 − LDR`, daarna plakken als waarden) omgezet, dus er is geen breuk in de grafiek. Getest: logische lichtwaarden |
@@ -363,20 +364,21 @@ Filip wil een **waarschuwingsmail naar `filip.delannoy@gmail.com` als de keldert
 - [x] Script v1.2 uitgerold en getest op 2/11 (test, proefmail, alarmmails, nieuwe versie, `installTrigger()`)
 - [ ] Na het uitrollen controleren: geen herstelmails/alarmmails bij normale waarden; later eventueel de kamergrens (3 °C) aanpassen aan het setpoint-minimum
 
-**Stap E — lessen uit ROOM v3.4.4/v3.4.5 (11/11): DHT22-uitlezing en NVS — voorrang op de rest van Stap D**
+**Stap E — lessen uit ROOM v3.4.4/v3.4.5 (11/11): DHT22-uitlezing en NVS — voorrang op de rest van Stap D (GO 11/11)**
 Op room80 is bewezen (10/11, Diagnose "laatste stap: DHT22 lezen") dat de **Adafruit-DHT-bibliotheek** de `INT_WDT`-herstarts veroorzaakt: ze zet de interrupts uit en wacht per flank tot "160 000 lussen", zonder te stoppen bij een fout. Hapert de DHT22, dan staan de interrupts seconden uit; de C6 heeft één kern → interrupt-watchdog. Dat past bij de `INT_WDT`-herstarts van 25/10, die stopten toen de DHT22 op 26/10 helemaal zweeg (dan faalt de bibliotheek meteen bij de eerste flank). Zie ook de lessen in de overkoepelende overdracht.
-- [ ] **Eigen DHT22-uitlezing** `dhtRead22()` uit ROOM v3.4.4 overnemen (max. 100 µs per flank, stoppen bij de eerste fout, interrupts hooguit ±5 ms uit); `#include <DHT.h>`, `dht.begin()` en `dht.read…()` weg. De DHT-monitoring en de power cycle via relais 3 blijven, met de nieuwe functie
-- [ ] **NVS nakijken:** NVS per naamruimte in `/advanced` (zoals ROOM v3.4.5); staan er oude Matter-resten (`CHIP_KVS`, `esp_matter_kvs`, `chip-*`, `nimble_bond`), dan wissen. Een volle NVS bewaart instellingen stilletjes niet meer
+- [x] **Eigen DHT22-uitlezing** (v1.10, 11/11; OTA en test nog te doen) `dhtRead22()` uit ROOM v3.4.4 overnemen (max. 100 µs per flank, stoppen bij de eerste fout, interrupts hooguit ±5 ms uit); `#include <DHT.h>`, `dht.begin()` en `dht.read…()` weg. De DHT-monitoring en de power cycle via relais 3 blijven, met de nieuwe functie
+- [ ] **NVS nakijken:** NVS per naamruimte in `/advanced` → Controller (v1.10, enkel tonen). De Sjalay heeft nooit Matter gehad, dus rommel wordt niet verwacht; een wisknop (**v1.11**) komt er enkel als v1.10 naamruimtes "(niet van deze sketch)" of een bijna volle NVS toont
 - [ ] **Van op afstand:** na de OTA-update `/reboot` en kijken of de DHT22 antwoordt. **Verwachting:** de nieuwe uitlezing voorkomt de herstarts, maar maakt een vastgelopen DHT22 niet wakker (een softwareherstart deed dat ook in oktober niet). Daarvoor blijft een **echte power cycle** nodig
-- [ ] **Power cycle van op afstand blijft dus nodig** (te beslissen): relais 3 + PCB-snede (sketch klaar sinds v1.6), of eenvoudiger een **slimme stekker** (bv. Shelly Plug) op de voeding van de controller, die de hele controller (ook de DHT22) uit en aan zet
+- [ ] **Power cycle van op afstand blijft dus nodig.** Beslist 11/11: een **Shelly Plug** op de voeding van de controller, te plaatsen bij het volgende bezoek; blijft staan tot alles stabiel draait. Zet de hele controller (ook de DHT22) uit en aan; bij het opstarten gaan de relais eerst veilig uit. Relais 3 + PCB-snede blijft een optie voor later
 
 **Stap D — SCD41: CO2 + reserve voor vocht en dauwpunt (gevraagd door Filip 9/11, plan goedgekeurd 9/11)**
 Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen**, en de SCD41 als **reserve voor vocht en dauwpunt** als de DHT22 uitvalt. De code is gebaseerd op de SCD41-code van de ROOM-sketch (repo `ESP32C6_ROOMS`). Alles wordt vooraf via OTA geflasht met de SCD41 **standaard uit**: ter plaatse enkel de sensor aansluiten en aanvinken in `/settings`.
 
 Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
 - **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Code en `.bin` klaar (10/11), OTA en test door Filip nog te doen*
-- **v1.10** — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
-- **v1.11** — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
+- **v1.10 / v1.11** — Stap E (DHT22-uitlezing, NVS), zie hierboven
+- **v1.12** (was v1.10, verschoven door Stap E) — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
+- **v1.13** (was v1.11) — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
 - Terugvallen kan altijd door de vorige `.bin` via `/update` te zetten
 - [ ] **USB-pinnen vrijmaken (verplicht):** I2C zit op IO13 (SDA) / IO11 (SCL), en IO13 is op de ESP32-C6 de USB-lijn D+. Zoals ROOM v3.4.2: compileren met **USB CDC On Boot = Disabled** en bij het opstarten de USB-functie van IO12/IO13 uitschakelen. `#define Serial Serial0` kan dan weg (Serial = UART0). Seriële monitor en flashen enkel nog via de poort "UART" (de Sjalay wordt toch via OTA bediend)
 - [ ] **SCD41-code overnemen uit ROOM:** niet-blokkerend lezen (elke 5 s), "ontbreekt" na 3 fouten of 60 s, elke minuut opnieuw proberen, Diagnose met mislukte stap en I2C-scan; `/settings`: SCD41 aan/uit, ASC, temperatuuroffset, kalibreren in buitenlucht (FRC 425 ppm)
@@ -402,6 +404,7 @@ Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **
   - Ook meebrengen: een stukje 2-aderige kabel met SM-connector (man en vrouw) voor het geval de bestaande connector vervangen moet worden
 - [ ] **Meten met de mini-scoop** (single shot, trigger op een val onder ± 3,2 V): (1) de 3,3 V-lijn aan de DHT22-pin, (2) de datalijn IO6 met de 10 kΩ pull-up tijdens een uitval (hangt hij permanent laag?) en tijdens een leescyclus (storing van relais of ketel), (3) de 5 V-ingang van de ESP32 onder belasting, ook tijdens het opstarten en Wi-Fi-zenden. Ook de kabel en de pull-up van de DHT22 controleren
 - [ ] **Test (ook voor vertrek):** VCC van de 4-relaismodule loskoppelen (relais vallen af, CV/SWW tijdelijk uit), controller kort stroomloos zetten, na 2–3 min `f` in `/json` bekijken. DHT22 blijft werken → oorzaak is de relaismodule (aparte 5 V-voeding of betere voedingsverdeling). Valt hij weg → relaismodule uitsluiten en verder meten. Module daarna weer aansluiten. Mogelijke oorzaken in volgorde: **onderdimensioneerde voeding** (VOLTCRAFT USPS-600, max. 0,6 A, lange dunne kabel), zakkende 3,3 V-lijn bij Wi-Fi-zending, 4-relaismodule, storing van de ketel op de kabels
+- [ ] **Shelly Plug meebrengen** en op de voeding van de controller zetten (Wi-Fi op de 4G-router, bereikbaar via Tailscale/app), zie Stap E
 - [ ] **SCD41 meebrengen** (GY-SCD41 + kabeltje met Dupont-stekker naar de I2C-header) en plaatsen: zie Stap D
 - [ ] **Materiaal (extra DS18B20's):** 2 waterdichte DS18B20, een verbindingsprintje om ze parallel te schakelen bij de boilersensor, 2 isolatiestrips voor op de buizen, soldeergerief en klein materiaal (krimpkousen, tie-wraps, draad)
 

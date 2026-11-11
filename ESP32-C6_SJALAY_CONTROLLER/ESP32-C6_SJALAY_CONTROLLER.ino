@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.9 — 10 nov 2026
+// SJALAY CONTROLLER — v1.10 — 11 nov 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -143,6 +143,23 @@
 //                Technisch: voorwaartse declaratie van getJSON() bovenaan, zodat de sketch ook
 //                compileert zonder automatische prototypes.
 // ----------------------------------------------------------------------------
+// v1.10 (11nov26): EIGEN DHT22-UITLEZING + NVS IN DE CONTROLLER-SECTIE (Stap E, les uit ROOM v3.4.4).
+//                (1) Oorzaak van de INT_WDT-herstarts (25/10): de Adafruit-DHT-bibliotheek zet de
+//                    interrupts uit en wacht per flank tot 160 000 lussen, zonder te stoppen bij een
+//                    fout. Hapert de DHT22, dan staan de interrupts seconden uit; de C6 heeft één kern
+//                    -> interrupt-watchdog. Nu een eigen uitlezing dhtRead22() (zelfde als ROOM v3.4.4):
+//                    tijd via de klokteller van de processor, max. 100 µs per flank, stoppen bij de
+//                    eerste fout -> interrupts hooguit ±5 ms uit. Bibliotheek DHT niet meer nodig;
+//                    "herinit" (na 5 fouten op rij) zet nu enkel de pin opnieuw als ingang met pull-up.
+//                    DHT-monitoring, vasthouden van de laatste geldige waarde en de power cycle via
+//                    relais 3 blijven zoals ze waren.
+//                (2) Teller "fouten op rij" (dht_fail_streak, /json B) is nu 32-bit: bleef op 65535
+//                    steken, en omdat 65535 deelbaar is door 5 gebeurde dan bij ELKE lezing een herinit.
+//                (3) /advanced, Controller: "NVS-geheugen" met vakjes gebruikt/totaal/vrij en de
+//                    bezetting per naamruimte; naamruimtes die niet van deze sketch of het systeem zijn,
+//                    krijgen "(niet van deze sketch)". Enkel tonen, niets wissen.
+//                /json-keys, Settings en Sheet ongewijzigd (Apps Script blijft v1.2).
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -157,7 +174,8 @@
 #include <string.h>
 #include <nvs.h>
 #include <nvs_flash.h>
-#include <DHT.h>
+#include "esp_cpu.h"                 // v1.10: klokteller voor de DHT22-uitlezing
+#include "driver/gpio.h"             // v1.10: gpio_get_level
 #include "hal/usb_serial_jtag_ll.h"  // v1.9: USB-functie van IO12/IO13 uitschakelen
 
 // v1.9: IO12/IO13 (USB D-/D+) zijn op het shield gewone pinnen (IO13 = I2C SDA). Met USB CDC aan kan dat niet.
@@ -179,7 +197,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.9"
+#define SJALAY_VERSION "1.10"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -218,7 +236,7 @@ inline void setRelay3(bool on) {
 #define HEATING_SETPOINT_MAX 30 // bovengrens verwarmings-slider = harde veiligheidsgrens
 #define BOILER_SETPOINT_MAX  60 // bovengrens SWW-slider = harde veiligheidsgrens
 
-DHT dht(DHT_PIN, DHT22);
+// v1.10: geen DHT-bibliotheek meer, zie dhtRead22()
 OneWireNg_CurrentPlatform ow(ONE_WIRE_PIN, false);
 
 // DS18B20 multi-sensor — max 4 op 1 bus
@@ -244,11 +262,11 @@ char reset_reason_txt[32] = "?";
 uint32_t boot_count = 0;
 bool dht_ok = false;                  // laatste DHT22-lezing geldig?
 bool dht_ever_valid = false;          // sinds boot al ooit een geldige meting?
-uint16_t dht_fail_streak = 0;         // opeenvolgende mislukte lezingen
+uint32_t dht_fail_streak = 0;         // opeenvolgende mislukte lezingen (v1.10: 32-bit, bleef op 65535 steken)
 uint32_t dht_fail_total = 0;          // totaal mislukte lezingen sinds boot
-uint32_t dht_reinit_count = 0;        // aantal keren dht.begin() opnieuw uitgevoerd
+uint32_t dht_reinit_count = 0;        // aantal keren de DHT-pin opnieuw ingesteld (v1.10; was dht.begin())
 unsigned long dht_last_valid_ms = 0;  // millis() van laatste geldige meting
-#define DHT_REINIT_AFTER   5          // opeenvolgende fouten vóór dht.begin()
+#define DHT_REINIT_AFTER   5          // opeenvolgende fouten vóór herinit van de pin
 #define DHT_FALLBACK_MAX_AGE_MS 300000UL  // DHT22 als kamer-terugval enkel als laatste meting < 5 min oud
 uint32_t sheets_fail_total = 0;       // mislukte Google-POSTs sinds boot
 unsigned long sheets_last_ms = 0;     // duur van laatste POST (ms)
@@ -637,8 +655,7 @@ void updateDhtPowerCycle() {
       if (now - dhtpc_t >= DHT_PC_OFF_MS) {
         setRelay3(false);                 // sensorrail weer gevoed
         ds_after_pc = true;               // v1.6
-        pinMode(DHT_PIN, INPUT_PULLUP);
-        dht.begin();
+        pinMode(DHT_PIN, INPUT_PULLUP);   // v1.10: dht.begin() weg
         dhtpc_state = PC_WARMUP;
         dhtpc_t = now;
       }
@@ -677,6 +694,73 @@ void dhtpcEvaluate() {
   }
 }
 
+// v1.10: eigen DHT22-uitlezing (overgenomen uit ROOM v3.4.4, zie changelog)
+// Wacht zolang de lijn op 'level' staat, max. max_us. Geeft de duur in µs terug, of -1 bij time-out.
+static inline int32_t dhtWait(int level, uint32_t max_us, uint32_t cyc_per_us) {
+  uint32_t start = esp_cpu_get_cycle_count();
+  uint32_t limit = max_us * cyc_per_us;
+  while (gpio_get_level((gpio_num_t)DHT_PIN) == level) {
+    if (esp_cpu_get_cycle_count() - start > limit) return -1;
+  }
+  return (int32_t)((esp_cpu_get_cycle_count() - start) / cyc_per_us);
+}
+
+// Lees de DHT22: true + t (°C) en h (%) bij een geldige meting, anders false en NaN.
+bool dhtRead22(float &t, float &h) {
+  t = NAN; h = NAN;
+  uint8_t d[5] = {0, 0, 0, 0, 0};
+  uint32_t cpu = getCpuFrequencyMhz();
+  // Startsignaal: 1,1 ms laag (DHT22 vraagt >= 1 ms), dan loslaten (pull-up)
+  pinMode(DHT_PIN, OUTPUT);
+  digitalWrite(DHT_PIN, LOW);
+  delayMicroseconds(1100);
+  pinMode(DHT_PIN, INPUT_PULLUP);
+  bool ok = true;
+  noInterrupts();                                    // tijdkritisch: hooguit ±5 ms
+  if (dhtWait(1, 200, cpu) < 0) ok = false;          // sensor trekt laag na 20-40 µs
+  if (ok && dhtWait(0, 100, cpu) < 0) ok = false;    // antwoord laag ±80 µs
+  if (ok && dhtWait(1, 100, cpu) < 0) ok = false;    // antwoord hoog ±80 µs
+  for (int i = 0; ok && i < 40; i++) {
+    if (dhtWait(0, 100, cpu) < 0) { ok = false; break; }       // ±50 µs laag
+    int32_t hi = dhtWait(1, 100, cpu);                          // 26-28 µs = 0, ±70 µs = 1
+    if (hi < 0) { ok = false; break; }
+    d[i / 8] <<= 1;
+    if (hi > 40) d[i / 8] |= 1;
+  }
+  interrupts();
+  if (!ok || (uint8_t)(d[0] + d[1] + d[2] + d[3]) != d[4]) return false;
+  h = ((d[0] << 8) | d[1]) * 0.1f;
+  float tt = (((d[2] & 0x7F) << 8) | d[3]) * 0.1f;
+  t = (d[2] & 0x80) ? -tt : tt;
+  return true;
+}
+
+// v1.10: NVS-bezetting per naamruimte (enkel tonen, uit ROOM v3.4.5)
+struct NvsNs { char name[16]; size_t used; };
+bool nvsKnownNamespace(const char* ns) {   // van deze sketch of van het systeem
+  return !strcmp(ns, "sjalay-cfg") || !strcmp(ns, "crash-log") || !strcmp(ns, "diag") ||
+         !strncmp(ns, "nvs.", 4) || !strcmp(ns, "phy") || !strcmp(ns, "misc");
+}
+int nvsListNamespaces(NvsNs* out, int max) {
+  int n = 0;
+  nvs_iterator_t it = NULL;
+  esp_err_t res = nvs_entry_find(NVS_DEFAULT_PART_NAME, NULL, NVS_TYPE_ANY, &it);
+  while (res == ESP_OK) {
+    nvs_entry_info_t info;
+    nvs_entry_info(it, &info);
+    bool seen = false;
+    for (int i = 0; i < n; i++) if (!strcmp(out[i].name, info.namespace_name)) { seen = true; break; }
+    if (!seen && n < max) { strlcpy(out[n].name, info.namespace_name, sizeof(out[n].name)); out[n].used = 0; n++; }
+    res = nvs_entry_next(&it);
+  }
+  nvs_release_iterator(it);
+  for (int i = 0; i < n; i++) {
+    nvs_handle_t h;
+    if (nvs_open(out[i].name, NVS_READONLY, &h) == ESP_OK) { nvs_get_used_entry_count(h, &out[i].used); nvs_close(h); }
+  }
+  return n;
+}
+
 void readAllSensors() {
   // v1.4: DHT22 met bewaking. Bij een mislukte lezing blijven humi/temp_dht op de
   // laatste geldige waarde staan (vocht/dauwpunt), tot de sensor terugkeert.
@@ -684,8 +768,7 @@ void readAllSensors() {
   bool dht_skip = (dhtpc_state == PC_OFF || dhtpc_state == PC_WARMUP);  // v1.5: sensor zonder voeding of opwarmend -> niet lezen
   float h_new = NAN, t_new = NAN;
   if (!dht_skip) {
-    h_new = dht.readHumidity();
-    t_new = dht.readTemperature();
+    dhtRead22(t_new, h_new);   // v1.10: eigen uitlezing, interrupts hooguit ±5 ms uit; fout -> NaN
   }
   if (dht_skip) {
     // geen lezing, tellers ongemoeid laten
@@ -698,12 +781,12 @@ void readAllSensors() {
     dht_last_valid_ms = millis();
   } else {
     dht_ok = false;
-    if (dht_fail_streak < 65535) dht_fail_streak++;
+    dht_fail_streak++;   // v1.10: 32-bit
     dht_fail_total++;
     if (dht_fail_streak % DHT_REINIT_AFTER == 0) {
-      dht.begin();
+      pinMode(DHT_PIN, INPUT_PULLUP);   // v1.10: was dht.begin()
       dht_reinit_count++;
-      Serial.printf("[DHT22] %u fouten op rij -> dht.begin() opnieuw (#%u)\n", (unsigned)dht_fail_streak, (unsigned)dht_reinit_count);
+      Serial.printf("[DHT22] %u fouten op rij -> pin opnieuw ingesteld (#%u)\n", (unsigned)dht_fail_streak, (unsigned)dht_reinit_count);
     }
   }
   if (!dht_skip) dhtpcEvaluate();
@@ -1577,6 +1660,21 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Crash-teller</td><td class=\"value\" id=\"v-crash\" colspan=\"2\">%u</td></tr>", (unsigned)getCrashCount());
   p->printf("<tr><td class=\"label\">Laatste reset-reden</td><td class=\"value\" colspan=\"2\">%s</td></tr>", reset_reason_txt);
   p->printf("<tr><td class=\"label\">Opstartteller</td><td class=\"value\" colspan=\"2\">%u</td></tr>", (unsigned)boot_count);
+  { // v1.10: NVS-bezetting (een volle NVS bewaart instellingen stilletjes niet meer)
+    nvs_stats_t st;
+    p->print(F("<tr><td class=\"label\">NVS-geheugen<br><span style=\"font-size:11px;color:#888;\">vakjes per naamruimte</span></td><td class=\"value\" colspan=\"2\">"));
+    if (nvs_get_stats(NULL, &st) == ESP_OK)
+      p->printf("%u van %u gebruikt &middot; %u vrij", (unsigned)st.used_entries, (unsigned)st.total_entries, (unsigned)st.free_entries);
+    else
+      p->print(F("niet leesbaar"));
+    NvsNs ns[24];
+    int n = nvsListNamespaces(ns, 24);
+    p->print(F("<br><span style=\"font-size:12px;\">"));
+    for (int i = 0; i < n; i++)
+      p->printf("%s%s %u%s", i ? " &middot; " : "", ns[i].name, (unsigned)ns[i].used,
+                nvsKnownNamespace(ns[i].name) ? "" : " <b style=\"color:#c60\">(niet van deze sketch)</b>");
+    p->print(F("</span></td></tr>"));
+  }
   p->printf("<tr><td class=\"label\">DS18B20 mislukte lezingen</td><td class=\"value\" colspan=\"2\">%u (sinds boot)</td></tr>", (unsigned)ds_fail_total);
   p->printf("<tr><td class=\"label\">Google-POST fouten</td><td class=\"value\" colspan=\"2\">%u (laatste duur %lu ms)</td></tr>", (unsigned)sheets_fail_total, sheets_last_ms);
   p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", SJALAY_VERSION);
@@ -2140,7 +2238,7 @@ void setup() {
 
   // === SENSOR-INIT ===
   pinMode(PIR_MOV1, INPUT_PULLUP);  // 3.3V PIR: beweging = LOW
-  dht.begin();
+  pinMode(DHT_PIN, INPUT_PULLUP);   // v1.10: eigen DHT22-uitlezing (geen dht.begin() meer)
 
   preferences.begin("sjalay-cfg", true);
   int stored_ds_count = preferences.getInt("ds_count", -1);
