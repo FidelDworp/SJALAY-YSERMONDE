@@ -1,6 +1,6 @@
 # Overdracht — Sjalay-controller (SJALAY-YSERMONDE)
 
-*Stand 10 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
+*Stand 11 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
 Dit document start een nieuw gesprek met Claude over de controller van de vakantiewoning **Sjalay (Recht)**: verwarming, warm water, verlichting en sensoren. Alle details: [`README.md`](../README.md) (deel A voor familie en huurders, deel B technisch).
 
@@ -13,12 +13,14 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 | | |
 |---|---|
 | Plaats | vakantiewoning Sjalay, Recht; internet via 4G, toegang via een RPi 3B+ met Tailscale |
-| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.9** (10/11/2026; v1.8 draait nog tot de OTA), met `partitions.csv` |
-| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.9.ino.bin` (v1.8 blijft als terugvaloptie tot v1.9 getest is) |
+| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.10** (11/11/2026; v1.8 draait nog tot de OTA), met `partitions.csv` |
+| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.10.ino.bin`; tijdelijk ook v1.9 (eerst flashen en testen) en v1.8 (terugvaloptie) |
 | Logging | Google Sheets via `GoogleScript/SJALAY_SHEETS_LOGGER.gs` v1.2 (met vorstalarm per mail). **Uitzondering:** deze controller post zelf (er is geen Dashboard ter plaatse) |
-| Bibliotheken | DHT, OneWireNg, Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
+| Bibliotheken | OneWireNg (DHT-bibliotheek niet meer sinds v1.10), Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
 
-## 2. Stand (7/11)
+## 2. Stand (11/11)
+
+- 11/11: v1.8 draait 8,9 dagen zonder herstart (DHT22 dood: de bibliotheek faalt dan meteen, dus geen `INT_WDT`). Google-POST-fouten ±4,5 % (4G). Power cycle via relais 3: 215 keer "mislukt" omdat relais 3/PCB-snede nog niet bedraad zijn.
 
 - v1.7/v1.8 draaien stabiel (op 2/11: 4,7 dagen uptime, geen `INT_WDT` meer na 26/10).
 - **DHT22 dood sinds 26/10 02:07.** Opvallend: de `INT_WDT`-herstarts (25/10) stopten rond hetzelfde moment. Dezelfde herstarts gebeurden op room80 (ROOM v3.2, 5–7/11): de DHT22-uitlezing is een verdachte. ROOM v3.3 heeft daarom een "laatste stap" in Diagnose; de Sjalay heeft sinds v1.5 een vergelijkbare broodkruimel (`INT_WDT@<fase>` in de reset-reden).
@@ -28,8 +30,8 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
-3. **SCD41 toevoegen (plan goedgekeurd 9/11):** CO2 tonen en loggen + reserve voor vocht en dauwpunt als de DHT22 uitvalt. Vooraf via OTA, SCD41 standaard uit; ter plaatse enkel aanvinken. Volgorde: **v1.9** USB-pinnen vrij → **v1.10** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.11** reserve vocht/dauwpunt + key `I`, elk met testperiode. Details: README §B7 Stap D. **v1.9 klaar (10/11), wacht op OTA en test**; daarna v1.10 (na GO).
-4. **Stap E (11/11, voorrang): eigen DHT22-uitlezing** uit ROOM v3.4.4 overnemen (de Adafruit-bibliotheek veroorzaakt de `INT_WDT`-herstarts) en NVS nakijken op Matter-resten (ROOM v3.4.5); daarna van op afstand herstarten. Een vastgelopen DHT22 komt pas terug na een echte power cycle: relais 3 + PCB-snede of een slimme stekker (te beslissen). README §B7 Stap E.
+3. **Volgorde (GO 11/11), elk met testperiode, code telkens na GO:** **v1.9** USB-pinnen vrij → **v1.10** eigen DHT22-uitlezing + NVS tonen (Stap E; oorzaak `INT_WDT` = Adafruit-DHT-bibliotheek) → **v1.11** NVS-wisknop, enkel indien nodig (de Sjalay had nooit Matter) → **v1.12** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.13** reserve vocht/dauwpunt via SCD41 + key `I`. Details: README §B7 Stap E en D. **Stand 11/11: v1.9 en v1.10 klaar, Filip draait nog v1.8**; eerst v1.9 flashen en testen, dan v1.10.
+4. **Power cycle van op afstand:** beslist 11/11 → **Shelly Plug** op de voeding van de controller bij het volgende bezoek; blijft staan tot alles stabiel draait. De nieuwe DHT-uitlezing voorkomt herstarts, maar maakt een vastgelopen DHT22 niet wakker.
 5. Zie README §B7 voor het volledige plan.
 
 ## 4. Praktisch
