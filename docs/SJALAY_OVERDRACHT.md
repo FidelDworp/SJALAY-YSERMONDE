@@ -13,7 +13,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 | | |
 |---|---|
 | Plaats | vakantiewoning Sjalay, Recht; internet via 4G, toegang via een RPi 3B+ met Tailscale |
-| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.10** (11/11/2026; v1.8 draait nog tot de OTA), met `partitions.csv` |
+| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.10** (11/11/2026, draait sinds 11/11 ±11:18), met `partitions.csv` |
 | Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.10.ino.bin`; tijdelijk ook v1.9 (eerst flashen en testen) en v1.8 (terugvaloptie) |
 | Logging | Google Sheets via `GoogleScript/SJALAY_SHEETS_LOGGER.gs` v1.2 (met vorstalarm per mail). **Uitzondering:** deze controller post zelf (er is geen Dashboard ter plaatse) |
 | Bibliotheken | OneWireNg (DHT-bibliotheek niet meer sinds v1.10), Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
@@ -30,7 +30,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
-3. **Volgorde (GO 11/11), elk met testperiode, code telkens na GO:** **v1.9** USB-pinnen vrij → **v1.10** eigen DHT22-uitlezing + NVS tonen (Stap E; oorzaak `INT_WDT` = Adafruit-DHT-bibliotheek) → **v1.11** NVS-wisknop, enkel indien nodig (de Sjalay had nooit Matter) → **v1.12** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.13** reserve vocht/dauwpunt via SCD41 + key `I`. Details: README §B7 Stap E en D. **Stand 11/11: v1.9 draait (OTA 11/11 ±11:04, test loopt), v1.10 klaar.** OTA-les: mislukt een upload halverwege, dan weigert v1.8/v1.9 elke volgende upload tot een `/reboot`; na een geslaagde upload geeft curl vaak "Connection reset" omdat de controller meteen herstart.
+3. **Volgorde (GO 11/11), elk met testperiode, code telkens na GO:** **v1.9** USB-pinnen vrij → **v1.10** eigen DHT22-uitlezing + NVS tonen (Stap E; oorzaak `INT_WDT` = Adafruit-DHT-bibliotheek) → **v1.11** NVS-wisknop, enkel indien nodig (de Sjalay had nooit Matter) → **v1.12** SCD41 + key `H` + logger v1.3 (kolommen AI/AJ) → **v1.13** reserve vocht/dauwpunt via SCD41 + key `I`. Details: README §B7 Stap E en D. **Stand 11/11: v1.10 draait (OTA 11/11 ±11:18, 48 u-test tot 13/11). NVS proper (280/630, geen vreemde naamruimtes) → v1.11 vervalt. Volgende: v1.12 (SCD41) na de test en GO.** OTA-les: mislukt een upload halverwege, dan weigert v1.8/v1.9 elke volgende upload tot een `/reboot`; na een geslaagde upload geeft curl vaak "Connection reset" omdat de controller meteen herstart.
 4. **Power cycle van op afstand:** beslist 11/11 → **Shelly Plug** op de voeding van de controller bij het volgende bezoek; blijft staan tot alles stabiel draait. De nieuwe DHT-uitlezing voorkomt herstarts, maar maakt een vastgelopen DHT22 niet wakker.
 5. Zie README §B7 voor het volledige plan.
 
