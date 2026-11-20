@@ -6,8 +6,8 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.10, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
-| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.10.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken; DHT-bibliotheek niet meer nodig sinds v1.10). Normaal alleen de laatste versie; tijdelijk staan ook `v1.9` (eerst te testen) en `v1.8` (terugvaloptie) erbij, tot v1.10 getest is |
+| **Sketch** | v1.11, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Normaal alleen de laatste versie; `v1.10.ino.bin` blijft als terugvaloptie tot v1.11 getest is |
 | **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
@@ -195,7 +195,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.10)
+## B5. De sketch (v1.11)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -222,6 +222,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.11 (20/11) | Vorstfix: `SENSOR_TEMP_MIN` 5 → −10 °C (kamer: DS18B20 en DHT22-terugval) en `SENSOR_BOILER_MIN` 0 → −10 °C. Onder 5 °C gold de kamersensor als defect → met de DHT22 weg werd de verwarming geblokkeerd, net wanneer vorstbeveiliging nodig is (15/11 02:16–11:01). Patroon gezien door Filip. Verder niets gewijzigd |
 | v1.10 (11/11) | Eigen DHT22-uitlezing `dhtRead22()` (uit ROOM v3.4.4) i.p.v. de Adafruit-bibliotheek, die de interrupts seconden kon uitzetten (oorzaak van de `INT_WDT`-herstarts van 25/10); interrupts nu hooguit ±5 ms uit. Teller "fouten op rij" (`B`) 32-bit (bleef op 65535 steken en gaf dan bij elke lezing een herinit). `/advanced` → Controller: NVS-bezetting per naamruimte (enkel tonen). OTA robuuster: een vastgelopen update wordt bij een nieuwe upload afgebroken, "Update mislukt!" toont de reden, herstart 3 s na "Update OK" vanuit `loop()` (antwoord komt ook via 4G aan). `/json`, Settings en Sheet ongewijzigd |
 | v1.9 (10/11) | USB-pinnen vrij (stap 1 van 3 voor de SCD41): compileren met USB CDC On Boot = Disabled en `releaseUsbPins()` bij het opstarten, zodat IO12/IO13 los zijn van de ingebouwde USB (zoals ROOM v3.4.2). Verder niets gewijzigd: `/json`, Settings en Sheet zoals v1.8 |
 | v1.8 (2/11) | Minimum van beide setpoints instelbaar in `/settings` (bewakingsdrempel): kamer 2–25 °C (standaard 5), boiler 3–50 °C (standaard 10). Het minimum is het laagste setpoint dat de regeling aanhoudt; de schuivers beginnen daar. Wordt het minimum boven het opgeslagen setpoint gezet, dan wordt het setpoint verhoogd. NVS-sleutels `heat_min`, `sww_min`; standaard = gedrag van v1.7. Geen Sheet-wijziging |
@@ -376,7 +377,8 @@ Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen*
 
 Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
 - **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Via OTA geflasht 11/11 ±11:04 (draait); eerste browser-upload mislukte, pas gelukt na `/reboot` (vastgelopen update-toestand, zie v1.10). Test loopt*
-- **v1.10** — Stap E (DHT22-uitlezing, NVS tonen, OTA robuuster), geflasht 11/11, test loopt; **v1.11 vervalt** (NVS proper)
+- **v1.10** — Stap E (DHT22-uitlezing, NVS tonen, OTA robuuster), geflasht 11/11, test geslaagd; NVS-wisknop vervalt (NVS proper)
+- **v1.11** — vorstfix (grenzen −10 °C), 20/11
 - **v1.12** (was v1.10, verschoven door Stap E) — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
 - **v1.13** (was v1.11) — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
 - Terugvallen kan altijd door de vorige `.bin` via `/update` te zetten

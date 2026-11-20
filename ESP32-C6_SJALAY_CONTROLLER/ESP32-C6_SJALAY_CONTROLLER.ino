@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.10 — 11 nov 2026
+// SJALAY CONTROLLER — v1.11 — 20 nov 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -166,6 +166,15 @@
 //                      webserver-taak), zodat het antwoord ook via 4G/Tailscale aankomt.
 //                /json-keys, Settings en Sheet ongewijzigd (Apps Script blijft v1.2).
 // ----------------------------------------------------------------------------
+// v1.11 (20nov26): VORSTFIX — plausibiliteitsgrenzen verlaagd (patroon gezien door Filip, 20/11).
+//                SENSOR_TEMP_MIN stond op 5,0 °C: een kamer kouder dan 5 °C gold als "sensor defect".
+//                Met de DHT22 ook weg -> kamertemp 0,0 en verwarming GEBLOKKEERD, net wanneer de
+//                vorstbeveiliging nodig is (gebeurd op 15/11 02:16-11:01, living op 5,0 °C).
+//                Nu: kamer (DS18B20 en DHT22-terugval) en boiler pas "defect" onder -10 °C.
+//                Een echt defecte DS18B20 wordt nog altijd herkend via CRC-fout, buiten -55..125 °C
+//                en DS_FAIL_THRESHOLD; de DHT22 via zijn eigen controlesom en fouttellers.
+//                Verder niets gewijzigd: /json, Settings en Sheet zoals v1.10 (Apps Script v1.2).
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -208,7 +217,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.10"
+#define SJALAY_VERSION "1.11"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -237,11 +246,11 @@ inline void setRelay3(bool on) {
 }
 
 // ============== SENSOR HEALTH THRESHOLDS ==============
-#define SENSOR_TEMP_MIN  5.0f   // °C — onder = sensor defect (kamer)
+#define SENSOR_TEMP_MIN -10.0f  // °C — onder = sensor defect (kamer); v1.11: was 5,0 en blokkeerde de vorstbeveiliging
 #define SENSOR_TEMP_MAX 40.0f   // °C — boven = sensor defect (kamer)
 #define SENSOR_HUMI_MIN  10     // %  — onder = sensor defect
 #define SENSOR_HUMI_MAX  99     // %  — boven = sensor defect
-#define SENSOR_BOILER_MIN 0.0f  // °C — onder = boilersensor defect (ander bereik dan kamer!)
+#define SENSOR_BOILER_MIN -10.0f // °C — onder = boilersensor defect; v1.11: was 0,0
 #define SENSOR_BOILER_MAX 90.0f // °C — boven = boilersensor defect
 #define DS_FAIL_THRESHOLD 3     // opeenvolgende mislukte lezingen vóór "sensor ontbreekt"
 #define HEATING_SETPOINT_MAX 30 // bovengrens verwarmings-slider = harde veiligheidsgrens
