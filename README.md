@@ -378,7 +378,7 @@ Filip wil de **SCD41** (Sensirion, I2C) ook in de Sjalay: **CO2 tonen en loggen*
 Goedgekeurd (9/11): `/json`-keys **`H`** = CO2 (ppm, `null` zonder sensor) en **`I`** = bron vocht/dauwpunt (0 = DHT22, 1 = SCD41, 2 = laatste geldige waarde); Sheet-kolommen **AI "CO2 (ppm)"** en **AJ "Vocht-bron"**. Uitvoering in opeenvolgende versies, elk met een testperiode (code telkens pas na GO):
 - **v1.9** — enkel USB-pinnen vrijmaken (CDC On Boot uit, IO12/IO13 los van USB). Test: alles werkt als v1.8. *Via OTA geflasht 11/11 ±11:04 (draait); eerste browser-upload mislukte, pas gelukt na `/reboot` (vastgelopen update-toestand, zie v1.10). Test loopt*
 - **v1.10** — Stap E (DHT22-uitlezing, NVS tonen, OTA robuuster), geflasht 11/11, test geslaagd; NVS-wisknop vervalt (NVS proper)
-- **v1.11** — vorstfix (grenzen −10 °C), 20/11
+- **v1.11** — vorstfix (grenzen −10 °C), geflasht 20/11; test geslaagd 22/11 (±12 u onder 5 °C, min. 3,8 °C, correct gelogd)
 - **v1.12** (was v1.10, verschoven door Stap E) — SCD41-code (standaard uit), CO2 op `/advanced` en landingspagina, key `H`; tegelijk **logger v1.3** met kolom AI (en AJ). Test zonder sensor: uit = geen verschil, aan = "ontbreekt" zonder herstarts
 - **v1.13** (was v1.11) — reserve vocht/dauwpunt via SCD41, key `I`, bron zichtbaar op `/advanced`. Volledige test na installatie van de sensor
 - Terugvallen kan altijd door de vorige `.bin` via `/update` te zetten
