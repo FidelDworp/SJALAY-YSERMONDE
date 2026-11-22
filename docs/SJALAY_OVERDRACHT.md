@@ -14,7 +14,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 |---|---|
 | Plaats | vakantiewoning Sjalay, Recht; internet via 4G, toegang via een RPi 3B+ met Tailscale |
 | Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.11** (20/11/2026, draait sinds 20/11 ±19:15), met `partitions.csv` |
-| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin`; v1.10 blijft als terugvaloptie tot v1.11 getest is |
+| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin` (enige versie in `bin/`) |
 | Logging | Google Sheets via `GoogleScript/SJALAY_SHEETS_LOGGER.gs` v1.2 (met vorstalarm per mail). **Uitzondering:** deze controller post zelf (er is geen Dashboard ter plaatse) |
 | Bibliotheken | OneWireNg (DHT-bibliotheek niet meer sinds v1.10), Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
 
