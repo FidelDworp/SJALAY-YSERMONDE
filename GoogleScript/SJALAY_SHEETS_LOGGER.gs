@@ -1,8 +1,9 @@
 // ============================================================
 // SJALAY / YSERMONDE CONTROLLER DATA LOGGER - Google Apps Script v1.3
-// Ontvangt JSON-push van de vakantiehuis-controller (ESP32-C6, één sketch voor
-// Sjalay en Ysermonde) en logt naar een Google Sheet. Elk huis heeft een EIGEN
-// Sheet met DEZE code (eigen implementatie = eigen URL in /settings van dat huis).
+// Ontvangt JSON-push van de vakantiehuis-controllers (ESP32-C6, één sketch voor
+// Sjalay en Ysermonde) en logt naar ÉÉN Google Sheet, tabblad "Data", voor alle huizen
+// (zelfde URL in /settings van elk huis). Huisfilter: keuzelijst in C1 (ALL of één huis),
+// zoals in de ROOM-Sheet (ROOM-script v1.6).
 //
 // v1.0 (1okt26): eerste versie voor Sjalay, 26 kolommen (A..Z).
 // v1.1 (25okt26): 34 kolommen (A..AH). Nieuw: AA Reset-reden, AB Boots, AC DHT-reeks,
@@ -20,9 +21,14 @@
 //                 BI..BK  watermeter (keys wa..wc): status, meterstand (m³), debiet (l/min)
 //                 Ontbrekende keys (oudere sketch, functie niet aanwezig) -> lege cel.
 //                 Kolommen worden uit één tabel (COLUMNS) opgebouwd: kop, key, notatie, breedte.
-//                 Alarm: onderwerp met de room-naam (Sjalay/Ysermonde); boileralarm enkel als
-//                 SWW aanwezig is (K = 1 of ontbreekt).
-//                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren (nieuwe koppen).
+//                 Eén Sheet voor alle huizen: keuzelijst in C1 (ALL + elke room-naam die ooit
+//                 postte) zet een filter op kolom C (verbergt enkel rijen, wist niets); titel
+//                 staat nu in D1. Grafieken op andere tabbladen tonen dan enkel het gekozen huis
+//                 (zolang "verborgen gegevens tonen" in de grafiek uit staat).
+//                 Alarm PER HUIS: eigen alarmtoestand en "geen data"-controle per room-naam,
+//                 room-naam in het onderwerp; boileralarm enkel als SWW aanwezig is (K ≠ 0).
+//                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren (nieuwe koppen
+//                 en keuzelijst; bestaande data blijft staan).
 //
 // ⚠️  DEPLOYMENT INSTRUCTIE (BELANGRIJK):
 //   Gebruik bij elke update: "Implementeren" → "Implementaties beheren"
@@ -35,9 +41,12 @@
 // ============================================================
 // ⚙️  CONFIGURATIE — pas hier aan zonder de rest aan te raken
 // ============================================================
-const MAX_ROWS    = 50000;  // Maximum aantal datarijen (excl. headers); oudste rij verdwijnt
-const HEADER_ROWS = 2;      // Rij 1 = titel+URL, Rij 2 = kolomtitels
+const MAX_ROWS    = 50000;  // Maximum aantal datarijen (excl. headers), ALLE huizen samen; oudste rij verdwijnt
+                            // (2 huizen om de 5 min ≈ 87 dagen per huis)
+const HEADER_ROWS = 2;      // Rij 1 = keuzelijst (C1) + titel (D1), Rij 2 = kolomtitels
 const SHEET_NAME  = "Data"; // naam van het tabblad met de logrijen
+const FILTER_CELL = "C1";   // keuzelijst huisfilter (boven de kolom "Kamer")
+const ROOM_COL    = 3;      // kolom C = Kamer (room-naam van de controller)
 const TITLE       = "SJALAY / YSERMONDE CONTROLLER DATA LOGGER v1.3";
 // ============================================================
 
@@ -170,6 +179,13 @@ function doPost(e) {
       Logger.log("MAX_ROWS (" + MAX_ROWS + ") bereikt — oudste rij verwijderd");
     }
 
+    // Huisfilter: nieuw huis in de keuzelijst; actief filter ook over de nieuwe rij
+    try {
+      const lijstGewijzigd = addRoomToList_(sheet, data.room);
+      const keuze = String(sheet.getRange(FILTER_CELL).getValue() || "ALL");
+      if (keuze !== "ALL" || lijstGewijzigd) applyRoomFilter_(sheet, keuze);
+    } catch (err) { Logger.log("Filter fout: " + err); }
+
     return ContentService
       .createTextOutput(JSON.stringify({
         status: "success", message: "Data gelogd", timestamp: timestamp,
@@ -186,7 +202,70 @@ function doPost(e) {
 }
 
 // ============================================================
+// HUISFILTER — keuzelijst in C1 (zelfde werking als de ROOM-Sheet)
+// ============================================================
+
+// Simple trigger: draait vanzelf als iemand de keuzelijst wijzigt.
+function onEdit(e) {
+  if (!e || !e.range) return;
+  const sheet = e.range.getSheet();
+  if (sheet.getName() !== SHEET_NAME) return;
+  if (e.range.getA1Notation() !== FILTER_CELL) return;
+  applyRoomFilter_(sheet, String(e.value || "ALL"));
+}
+
+// Filter op kolom C: één huis tonen, of alles (ALL). Verbergt alleen rijen, wist niets.
+function applyRoomFilter_(sheet, keuze) {
+  const bestaand = sheet.getFilter();
+  if (bestaand) bestaand.remove();
+  if (!keuze || keuze === "ALL") return;
+  const lastRow = Math.max(sheet.getLastRow(), HEADER_ROWS + 1);
+  const range = sheet.getRange(HEADER_ROWS, 1, lastRow - HEADER_ROWS + 1, NUM_COLS);
+  range.createFilter().setColumnFilterCriteria(ROOM_COL,
+    SpreadsheetApp.newFilterCriteria().whenTextEqualTo(keuze).build());
+}
+
+// Huis toevoegen aan de keuzelijst als het er nog niet in staat. true = lijst gewijzigd.
+function addRoomToList_(sheet, room) {
+  if (!room || room === "?") return false;
+  room = String(room);
+  const props = PropertiesService.getDocumentProperties();
+  const rooms = JSON.parse(props.getProperty("rooms") || "[]");
+  if (rooms.indexOf(room) !== -1) return false;
+  rooms.push(room);
+  rooms.sort();
+  props.setProperty("rooms", JSON.stringify(rooms));
+  setRoomDropdown_(sheet, rooms);
+  return true;
+}
+
+function setRoomDropdown_(sheet, rooms) {
+  const cell = sheet.getRange(FILTER_CELL);
+  cell.setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInList(["ALL"].concat(rooms), true).setAllowInvalid(false).build());
+  if (!cell.getValue()) cell.setValue("ALL");
+}
+
+// Eenmalig handig na de overstap: keuzelijst opbouwen uit alle room-namen in kolom C.
+function rebuildRoomList() {
+  const sheet = getLogSheet_();
+  const n = sheet.getLastRow() - HEADER_ROWS;
+  const rooms = [];
+  if (n > 0) {
+    sheet.getRange(HEADER_ROWS + 1, ROOM_COL, n, 1).getValues().forEach(function (r) {
+      const v = String(r[0] || "");
+      if (v && v !== "?" && rooms.indexOf(v) === -1) rooms.push(v);
+    });
+  }
+  rooms.sort();
+  PropertiesService.getDocumentProperties().setProperty("rooms", JSON.stringify(rooms));
+  setRoomDropdown_(sheet, rooms);
+  Logger.log("Keuzelijst: ALL, " + rooms.join(", "));
+}
+
+// ============================================================
 // ALARM — vorstmail + "geen data"-melding
+//  v1.3: alles PER HUIS (room-naam): eigen alarmtoestand, eigen "laatste POST".
 //  1) sjalayAlarmCheck(data) wordt bij elke POST aangeroepen vanuit doPost.
 //     Zakt kamer/boiler/kelder onder zijn grens -> mail; hoogstens 1 per ALARM_PAUSE_H
 //     uur per alarm; boven grens + ALARM_HYST -> herstelmail.
@@ -217,9 +296,7 @@ function alarmNum_(v) {
 function alarmFmt_(v) { return v === null ? '—' : v.toFixed(1).replace('.', ',') + ' °C'; }
 function alarmNow_() { return Utilities.formatDate(new Date(), ALARM_TZ, 'yyyy-MM-dd HH:mm'); }
 function alarmSend_(subject, body) { MailApp.sendEmail(ALARM_MAIL, subject, body); }
-function alarmHouse_() {
-  return PropertiesService.getScriptProperties().getProperty('room') || 'Controller';
-}
+function roomKey_(room) { return String(room || '?').replace(/[^A-Za-z0-9_-]/g, '_'); }
 function alarmValuesText_(vals) {
   return ALARM_SENSORS.filter(function (s) { return vals[s.id] !== undefined; })
     .map(function (s) { return s.label + ': ' + alarmFmt_(vals[s.id]); }).join('\n');
@@ -232,13 +309,14 @@ function sjalayAlarmCheck(data) {
   try {
     const props = PropertiesService.getScriptProperties();
     const now = Date.now();
-    props.setProperty('lastPost', String(now));
-    if (data.room) props.setProperty('room', String(data.room));
-    const house = alarmHouse_();
+    const house = String(data.room || '?');
+    const rk = roomKey_(house) + '_';                         // prefix: elk huis eigen toestand
+    props.setProperty(rk + 'lastPost', String(now));
+    props.setProperty(rk + 'name', house);
 
-    if (props.getProperty('nodata_active') === '1') {
-      props.deleteProperty('nodata_active');
-      props.deleteProperty('nodata_last');
+    if (props.getProperty(rk + 'nodata_active') === '1') {
+      props.deleteProperty(rk + 'nodata_active');
+      props.deleteProperty(rk + 'nodata_last');
       alarmSend_('✅ ' + house + ' stuurt weer gegevens', 'De controller stuurt weer gegevens (' + alarmNow_() + ').');
     }
 
@@ -252,22 +330,22 @@ function sjalayAlarmCheck(data) {
       if (!(s.id in vals)) return;
       const v = vals[s.id];
       if (v === null || v === 0) return;                      // geen betrouwbare waarde
-      const active = props.getProperty('al_' + s.id) === '1';
-      const last = Number(props.getProperty('last_' + s.id) || 0);
+      const active = props.getProperty(rk + 'al_' + s.id) === '1';
+      const last = Number(props.getProperty(rk + 'last_' + s.id) || 0);
       if (v < s.limit) {
         if (!active || (now - last) >= ALARM_PAUSE_H * 3600 * 1000) {
           alarmSend_('⚠️ ' + house + ': ' + s.label + ' ' + alarmFmt_(v) + ' (grens ' + s.limit + ' °C)',
             s.label + ' is onder ' + s.limit + ' °C gezakt (vorstgevaar).\n\n' + alarmValuesText_(vals) +
             '\n\nTijdstip: ' + alarmNow_() + '\nVolgende mail voor dit alarm na ' + ALARM_PAUSE_H + ' uur.');
-          props.setProperty('al_' + s.id, '1');
-          props.setProperty('last_' + s.id, String(now));
+          props.setProperty(rk + 'al_' + s.id, '1');
+          props.setProperty(rk + 'last_' + s.id, String(now));
         }
       } else if (active && v >= s.limit + ALARM_HYST) {
         alarmSend_('✅ ' + house + ': ' + s.label + ' weer ' + alarmFmt_(v),
           s.label + ' is weer boven ' + (s.limit + ALARM_HYST).toString().replace('.', ',') + ' °C.\n\n' +
           alarmValuesText_(vals) + '\n\nTijdstip: ' + alarmNow_());
-        props.deleteProperty('al_' + s.id);
-        props.deleteProperty('last_' + s.id);
+        props.deleteProperty(rk + 'al_' + s.id);
+        props.deleteProperty(rk + 'last_' + s.id);
       }
     });
   } finally {
@@ -275,30 +353,45 @@ function sjalayAlarmCheck(data) {
   }
 }
 
-// ---------- 2) "geen data"-controle (tijd-trigger, elk uur) ----------
+// ---------- 2) "geen data"-controle (tijd-trigger, elk uur), per huis ----------
 function sjalayNoDataCheck() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
   try {
     const props = PropertiesService.getScriptProperties();
+    const all = props.getProperties();
     const now = Date.now();
-    const lastPost = Number(props.getProperty('lastPost') || 0);
-    if (!lastPost) { props.setProperty('lastPost', String(now)); return; }
-    const hours = (now - lastPost) / 3600000;
-    if (hours < NODATA_AFTER_H) return;
-    const active = props.getProperty('nodata_active') === '1';
-    const last = Number(props.getProperty('nodata_last') || 0);
-    if (!active || (now - last) >= ALARM_PAUSE_H * 3600 * 1000) {
-      const since = Utilities.formatDate(new Date(lastPost), ALARM_TZ, 'yyyy-MM-dd HH:mm');
-      alarmSend_('⚠️ ' + alarmHouse_() + ' stuurt geen gegevens meer',
-        'Laatste gegevens ontvangen: ' + since + ' (' + Math.floor(hours) + ' uur geleden).\n' +
-        'Mogelijke oorzaken: stroom, Wi-Fi/internet, een vastgelopen controller.\n\nTijdstip: ' + alarmNow_());
-      props.setProperty('nodata_active', '1');
-      props.setProperty('nodata_last', String(now));
-    }
+    Object.keys(all).forEach(function (key) {
+      if (!/_lastPost$/.test(key)) return;
+      const rk = key.slice(0, -'lastPost'.length);           // bv. "Sjalay_"
+      const house = all[rk + 'name'] || rk.slice(0, -1);
+      const lastPost = Number(all[key] || 0);
+      if (!lastPost) return;
+      const hours = (now - lastPost) / 3600000;
+      if (hours < NODATA_AFTER_H) return;
+      const active = all[rk + 'nodata_active'] === '1';
+      const last = Number(all[rk + 'nodata_last'] || 0);
+      if (!active || (now - last) >= ALARM_PAUSE_H * 3600 * 1000) {
+        const since = Utilities.formatDate(new Date(lastPost), ALARM_TZ, 'yyyy-MM-dd HH:mm');
+        alarmSend_('⚠️ ' + house + ' stuurt geen gegevens meer',
+          'Laatste gegevens ontvangen: ' + since + ' (' + Math.floor(hours) + ' uur geleden).\n' +
+          'Mogelijke oorzaken: stroom, Wi-Fi/internet, een vastgelopen controller.\n\nTijdstip: ' + alarmNow_());
+        props.setProperty(rk + 'nodata_active', '1');
+        props.setProperty(rk + 'nodata_last', String(now));
+      }
+    });
   } finally {
     lock.releaseLock();
   }
+}
+
+// Huis niet meer opvolgen voor "geen data" (bv. controller definitief weg): Uitvoeren met de room-naam
+// aanpassen in de regel hieronder.
+function stopNoDataFor() {
+  const house = 'NAAM_HIER';
+  const rk = roomKey_(house) + '_';
+  const props = PropertiesService.getScriptProperties();
+  ['lastPost', 'name', 'nodata_active', 'nodata_last'].forEach(function (k) { props.deleteProperty(rk + k); });
 }
 
 // ---------- eenmalig uit te voeren ----------
@@ -309,18 +402,15 @@ function installTrigger() {   // maakt de uurlijkse "geen data"-trigger (verwijd
   ScriptApp.newTrigger('sjalayNoDataCheck').timeBased().everyHours(1).create();
 }
 function testMail() {         // proefmail + vraagt eenmalig toestemming voor Mail
-  alarmSend_(alarmHouse_() + ' alarm: proefmail', 'Dit is een proefmail van het alarmscript (' + alarmNow_() + ').\n\n' +
+  alarmSend_('Vakantiehuizen alarm: proefmail', 'Dit is een proefmail van het alarmscript (' + alarmNow_() + ').\n\n' +
     'Grenzen: kamer ' + ALARM_SENSORS[0].limit + ' °C, boiler ' + ALARM_SENSORS[1].limit + ' °C, kelder ' + ALARM_SENSORS[2].limit + ' °C.');
 }
-function testAlarm() {        // simuleert kamer 2,5 / boiler 3,5 / kelder 1,5 °C: 3 alarmmails, wist daarna de toestand
-  sjalayAlarmCheck({ room: alarmHouse_(), d: 2.5, k: 3.5, E: 1.5 });
+function testAlarm() {        // simuleert kamer 2,5 / boiler 3,5 / kelder 1,5 °C voor huis "TEST": 3 alarmmails, wist daarna
+  sjalayAlarmCheck({ room: 'TEST', d: 2.5, k: 3.5, E: 1.5 });
   resetAlarmState();
 }
-function resetAlarmState() {  // wist de alarmtoestand (na tests); room-naam blijft
-  const props = PropertiesService.getScriptProperties();
-  const room = props.getProperty('room');
-  props.deleteAllProperties();
-  if (room) props.setProperty('room', room);
+function resetAlarmState() {  // wist ALLE alarmtoestand (na tests); "geen data" start opnieuw bij de volgende POST
+  PropertiesService.getScriptProperties().deleteAllProperties();
 }
 
 // ============================================================
@@ -330,27 +420,31 @@ function resetAlarmState() {  // wist de alarmtoestand (na tests); room-naam bli
 function setupHeaders() {
   const sheet = getLogSheet_();
   const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  if (sheet.getFilter()) sheet.getFilter().remove();
 
+  // Oude koprijen weg: rij 2 = kolomtitels; rij 1 = titel (oud: in A1, nieuw: in D1)
   if (sheet.getLastRow() >= 2 && sheet.getRange(2, 1).getValue() === "Tijdstempel") {
     sheet.deleteRow(2);
   }
   if (sheet.getLastRow() >= 1) {
-    const row1 = sheet.getRange(1, 1).getValue();
-    if (typeof row1 === "string" && row1.indexOf("CONTROLLER DATA LOGGER") >= 0) sheet.deleteRow(1);
+    const a1 = String(sheet.getRange(1, 1).getValue() || "");
+    const d1 = String(sheet.getRange(1, 4).getValue() || "");
+    if (a1.indexOf("CONTROLLER DATA LOGGER") >= 0 || d1.indexOf("CONTROLLER DATA LOGGER") >= 0) sheet.deleteRow(1);
   }
+  if (sheet.getMaxColumns() < NUM_COLS) sheet.insertColumnsAfter(sheet.getMaxColumns(), NUM_COLS - sheet.getMaxColumns());
 
-  // Rij 1: titel + URL
+  // Rij 1: A1 "Huisfilter →", C1 keuzelijst, D1 titel + URL
   sheet.insertRowBefore(1);
-  const titleCell = sheet.getRange(1, 1);
-  titleCell.setValue(TITLE + "  |  " + ss.getUrl());
-  titleCell.setFontSize(9).setFontWeight("normal").setFontStyle("italic")
-           .setFontColor("#cccccc").setBackground("#222222")
-           .setHorizontalAlignment("left").setVerticalAlignment("middle");
+  sheet.getRange(1, 1, 1, sheet.getMaxColumns())
+       .setBackground("#222222").setFontColor("#cccccc").setFontSize(9).setVerticalAlignment("middle");
+  sheet.getRange("A1").setValue("Huisfilter →").setHorizontalAlignment("right").setFontStyle("italic");
+  sheet.getRange(FILTER_CELL).setBackground("#ffffff").setFontColor("#000000").setFontSize(10)
+       .setFontWeight("bold").setHorizontalAlignment("center");
+  sheet.getRange("D1").setValue(TITLE + "  |  " + ss.getUrl()).setFontStyle("italic").setHorizontalAlignment("left");
   sheet.setRowHeight(1, 24);
 
   // Rij 2: kolomtitels
   const headers = COLUMNS.map(function (c) { return c.h; });
-  if (sheet.getMaxColumns() < NUM_COLS) sheet.insertColumnsAfter(sheet.getMaxColumns(), NUM_COLS - sheet.getMaxColumns());
   sheet.insertRowBefore(2);
   const headerRange = sheet.getRange(2, 1, 1, NUM_COLS);
   headerRange.setValues([headers]);
@@ -369,6 +463,8 @@ function setupHeaders() {
 
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(1);
+  rebuildRoomList();                         // keuzelijst uit de bestaande data (bv. "Sjalay")
+  sheet.getRange(FILTER_CELL).setValue("ALL");
   Logger.log("Headers aangemaakt: " + NUM_COLS + " kolommen (A t/m BK). MAX_ROWS = " + MAX_ROWS);
 }
 

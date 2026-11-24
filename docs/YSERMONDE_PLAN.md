@@ -43,7 +43,7 @@ Met port forwarding staat de controller rechtstreeks op het internet (gewone HTT
 - Velden: `active_power_w`, `total_power_import_t1_kwh`, `total_power_import_t2_kwh`, `total_power_export_t1_kwh`, `total_power_export_t2_kwh`, `total_gas_m3`, `gas_timestamp`.
 - Tonen op `/advanced` (en compact op de landingspagina), in `/json` en in de Sheet.
 - **`/json`-keys en Sheet-kolommen: VAST sinds 24/11** (Apps Script v1.3, eindschema A–BK). Volledige tabel in README §B6. P1: `pa` status, `pb`–`pe` vermogen totaal/L1–L3, `pf`/`pg` afname dag/nacht, `ph`/`pi` injectie dag/nacht, `pj` tarief, `pk` kwartiervermogen, `pl` maandpiek, `pm`–`po` spanning, `pp`–`pr` stroom, `ps` gas m³, `pt` gastijd, `pu` lange stroomonderbrekingen, `pv` Wi-Fi dongle. Verder `H`/`I` (SCD41), `J`/`K` (functies), `wa`–`wc` (watermeter).
-- **Sheet:** zelfde Apps Script voor beide huizen (logger v1.3, al klaar in de repo), elk huis een **eigen Google Sheet**. Verbruik per interval of per dag berekent de Sheet (extra tabblad) uit de meterstanden.
+- **Sheet:** **één Sheet voor beide huizen** (de bestaande Sjalay-log, logger v1.3, al klaar in de repo), zelfde web-app-URL in `/settings` van elk huis. **Huisfilter: keuzelijst in C1** (ALL / Sjalay / Ysermonde), zoals in de ROOM-Sheet; grafieken volgen het filter. Alarmmails per huis. Verbruik per interval of per dag berekent een extra tabblad uit de meterstanden.
 
 ## 5. Volgorde van de versies
 
@@ -63,7 +63,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 1. ESP32-C6 (later met shield; voor de P1-logger volstaat het devkit alleen).
 2. **Eerste flash met kabel** via de USB-C-poort "UART" (USB CDC On Boot = Disabled); daarna alles via OTA.
 3. AP-portaal: Wi-Fi, room-naam "Ysermonde", vast IP of DHCP-reservatie.
-4. `/settings`: Verwarming **uit**, SWW **uit**, P1-IP invullen, Google Script-URL van de **Ysermonde-Sheet**.
+4. `/settings`: room-naam "Ysermonde", Verwarming **uit**, SWW **uit**, P1-IP invullen, **dezelfde** Google Script-URL als de Sjalay.
 5. HomeWizard: lokale API aan, vast IP.
 6. Port forwarding pas na v1.14.
 
