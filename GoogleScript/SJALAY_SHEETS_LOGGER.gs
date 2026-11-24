@@ -11,14 +11,13 @@
 //                 JSON null -> lege cel. Kolom E = EFFECTIEF setpoint (veld y).
 // v1.2 (2nov26): Vorstalarm per mail + "geen data"-melding; logt naar tabblad "Data".
 // v1.3 (24nov26): VOLLEDIG SCHEMA (bedoeld als eindschema, ook voor latere sketchversies):
-//                 63 kolommen (A..BK). Kolommen A..AH ongewijzigd. Nieuw:
-//                 AI..AJ  SCD41: CO2 (H), vocht-bron (I)
-//                 AK..AL  functies: verwarming aanwezig (J), SWW-boiler aanwezig (K)
-//                 AM..BH  HomeWizard P1-meter (keys pa..pv): status, vermogen (totaal + L1..L3),
-//                         meterstanden afname/injectie dag/nacht, tarief, kwartiervermogen,
-//                         maandpiek (capaciteitstarief), spanning en stroom L1..L3, gas (m³ + tijd),
-//                         lange stroomonderbrekingen, Wi-Fi-sterkte dongle
-//                 BI..BK  watermeter (keys wa..wc): status, meterstand (m³), debiet (l/min)
+//                 63 kolommen (A..BK), NIEUWE VOLGORDE per soort data (zoals de ROOM-Sheet):
+//                 1 identiteit (A-C) · 2 verwarming en binnenklimaat (D-M, incl. CO2 en vocht-bron)
+//                 · 3 andere temperaturen (N-P) · 4 SWW (Q-T) · 5 elektriciteit en gas, HomeWizard
+//                 P1 (U-AP) · 6 water (AQ-AS) · 7 licht, pixels, beweging (AT-BB) · 8 controller en
+//                 diagnose (BC-BK). Nieuwe keys: H CO2, I vocht-bron, J/K functies, pa..pv P1, wa..wc water.
+//                 Overstap: archiveerEnNieuweKoppen() eenmalig (oude rijen naar tabblad "Archief v1.2",
+//                 "Data" leeg met de nieuwe koppen). Grafieken op andere tabbladen opnieuw instellen.
 //                 Ontbrekende keys (oudere sketch, functie niet aanwezig) -> lege cel.
 //                 Kolommen worden uit één tabel (COLUMNS) opgebouwd: kop, key, notatie, breedte.
 //                 Eén Sheet voor alle huizen: keuzelijst in C1 (ALL + elke room-naam die ooit
@@ -27,8 +26,7 @@
 //                 (zolang "verborgen gegevens tonen" in de grafiek uit staat).
 //                 Alarm PER HUIS: eigen alarmtoestand en "geen data"-controle per room-naam,
 //                 room-naam in het onderwerp; boileralarm enkel als SWW aanwezig is (K ≠ 0).
-//                 Na het bijwerken: setupHeaders() eenmalig opnieuw uitvoeren (nieuwe koppen
-//                 en keuzelijst; bestaande data blijft staan).
+//                 Na het bijwerken: archiveerEnNieuweKoppen() eenmalig (zie hierboven).
 //
 // ⚠️  DEPLOYMENT INSTRUCTIE (BELANGRIJK):
 //   Gebruik bij elke update: "Implementeren" → "Implementaties beheren"
@@ -75,76 +73,84 @@ function gasTime_(v) {
 function k_(key) { return function (d) { return blank(d[key]); }; }
 
 const COLUMNS = [
-  // ---- A..AH: zoals v1.1/v1.2 (ongewijzigd) ----
+  // ---- 1. Identiteit ----
   { h: "Tijdstempel",    w: 130, f: "yyyy-mm-dd hh:mm:ss", val: function (d, ts) { return ts; } },       // A
   { h: "Uptime (s)",     w: 60,  val: function (d) { return d.a || 0; } },                                // B  a
-  { h: "Kamer",          w: 80,  val: function (d) { return d.room || "?"; } },                           // C  room
-  { h: "HEAT",           w: 45,  val: function (d) { return d.b || 0; } },                                // D  b ketelvraag
-  { h: "Set (°C)",       w: 55,  f: "0.0", val: function (d) { return d.y != null ? d.y : (d.c || 0); } },// E  y effectief setpoint
-  { h: "Temp1 (°C)",     w: 60,  f: "0.0", val: k_("d") },                                                // F  d kamertemp (effectief)
-  { h: "Temp2 (°C)",     w: 60,  f: "0.0", val: k_("e") },                                                // G  e DHT22 rauw
-  { h: "Vocht (%)",      w: 50,  f: "0.0", val: k_("f") },                                                // H  f
-  { h: "Dauwpt (°C)",    w: 60,  f: "0.0", val: k_("g") },                                                // I  g
-  { h: "Dew Alert",      w: 55,  val: function (d) { return d.h || 0; } },                                // J  h
-  { h: "SWW pomp",       w: 55,  f: "0",   val: function (d) { return d.i ? 1 : 0; } },                  // K  i
-  { h: "SWW Set (°C)",   w: 65,  val: function (d) { return d.j || 0; } },                                // L  j
-  { h: "Boiler (°C)",    w: 60,  f: "0.0", val: k_("k") },                                                // M  k
-  { h: "Licht LDR",      w: 55,  val: function (d) { return d.l || 0; } },                                // N  l
-  { h: "Nacht",          w: 45,  val: function (d) { return d.m || 0; } },                                // O  m
-  { h: "Bed",            w: 40,  val: function (d) { return d.n || 0; } },                                // P  n
-  { h: "R",              w: 35,  val: function (d) { return d.o || 0; } },                                // Q  o
-  { h: "G",              w: 35,  val: function (d) { return d.p || 0; } },                                // R  p
-  { h: "B",              w: 35,  val: function (d) { return d.q || 0; } },                                // S  q
-  { h: "Pixels aan",     w: 110, val: function (d) { return d.r || "P=00000000"; } },                     // T  r (tekst, bewaart nullen)
-  { h: "Pixel mode",     w: 70,  val: function (d) { return d.s || 0; } },                                // U  s
-  { h: "MOV1",           w: 45,  val: function (d) { return d.t || 0; } },                                // V  t
-  { h: "RSSI (dBm)",     w: 60,  val: function (d) { return d.u || 0; } },                                // W  u
-  { h: "Heap vrij (KB)", w: 70,  val: function (d) { return d.v || 0; } },                                // X  v
-  { h: "Heap blok (KB)", w: 70,  val: function (d) { return d.w || 0; } },                                // Y  w
-  { h: "DS count",       w: 55,  val: function (d) { return d.x || 0; } },                                // Z  x
-  { h: "Reset",          w: 80,  val: function (d) { return d.z || ""; } },                               // AA z
-  { h: "Boots",          w: 50,  val: k_("A") },                                                          // AB A
-  { h: "DHT reeks",      w: 55,  val: k_("B") },                                                          // AC B
-  { h: "DHT fouten",     w: 55,  val: k_("C") },                                                          // AD C
-  { h: "POST fouten",    w: 60,  val: k_("D") },                                                          // AE D
-  { h: "Kelder (°C)",    w: 60,  f: "0.0", val: k_("E") },                                                // AF E
-  { h: "Ketelpomp (°C)", w: 65,  f: "0.0", val: k_("F") },                                                // AG F
-  { h: "Retour (°C)",    w: 60,  f: "0.0", val: k_("G") },                                                // AH G
+  { h: "Kamer",          w: 80,  val: function (d) { return d.room || "?"; } },                           // C  room (huisfilter in C1)
 
-  // ---- AI..AL: SCD41 en functies (v1.3) ----
-  { h: "CO2 (ppm)",      w: 60,  f: "0",   val: k_("H") },  // AI H  CO2, leeg zonder sensor
-  { h: "Vocht-bron",     w: 60,  f: "0",   val: k_("I") },  // AJ I  0 = DHT22, 1 = SCD41, 2 = laatste geldige
-  { h: "Verwarming",     w: 70,  f: "0",   val: k_("J") },  // AK J  verwarming aanwezig (0/1)
-  { h: "SWW-boiler",     w: 70,  f: "0",   val: k_("K") },  // AL K  SWW-boiler aanwezig (0/1)
+  // ---- 2. Verwarming en binnenklimaat ----
+  { h: "Verwarming",     w: 70,  f: "0",   val: k_("J") },                                                // D  J verwarming aanwezig (0/1)
+  { h: "HEAT",           w: 45,  val: function (d) { return d.b || 0; } },                                // E  b ketelvraag
+  { h: "Set (°C)",       w: 55,  f: "0.0", val: function (d) { return d.y != null ? d.y : (d.c || 0); } },// F  y effectief setpoint
+  { h: "Temp1 (°C)",     w: 60,  f: "0.0", val: k_("d") },                                                // G  d kamertemp (effectief)
+  { h: "Temp2 (°C)",     w: 60,  f: "0.0", val: k_("e") },                                                // H  e DHT22 rauw
+  { h: "Vocht (%)",      w: 50,  f: "0.0", val: k_("f") },                                                // I  f
+  { h: "Dauwpt (°C)",    w: 60,  f: "0.0", val: k_("g") },                                                // J  g
+  { h: "Dew Alert",      w: 55,  val: function (d) { return d.h || 0; } },                                // K  h
+  { h: "Vocht-bron",     w: 60,  f: "0",   val: k_("I") },                                                // L  I 0 = DHT22, 1 = SCD41, 2 = laatste geldige
+  { h: "CO2 (ppm)",      w: 60,  f: "0",   val: k_("H") },                                                // M  H SCD41
 
-  // ---- AM..BH: HomeWizard P1-meter (v1.3) ----
-  { h: "P1 status",          w: 55, f: "0",     val: k_("pa") }, // AM pa 0 OK, 1 geen antwoord, 2 niet ingesteld, 3 ongeldige data
-  { h: "Vermogen (W)",       w: 70, f: "0",     val: k_("pb") }, // AN pb active_power_w (negatief = injectie)
-  { h: "L1 (W)",             w: 55, f: "0",     val: k_("pc") }, // AO pc active_power_l1_w
-  { h: "L2 (W)",             w: 55, f: "0",     val: k_("pd") }, // AP pd active_power_l2_w (leeg bij 1 fase)
-  { h: "L3 (W)",             w: 55, f: "0",     val: k_("pe") }, // AQ pe active_power_l3_w (leeg bij 1 fase)
-  { h: "Afname dag (kWh)",   w: 80, f: "0.000", val: k_("pf") }, // AR pf total_power_import_t1_kwh
-  { h: "Afname nacht (kWh)", w: 80, f: "0.000", val: k_("pg") }, // AS pg total_power_import_t2_kwh
-  { h: "Injectie dag (kWh)", w: 80, f: "0.000", val: k_("ph") }, // AT ph total_power_export_t1_kwh
-  { h: "Injectie nacht (kWh)",w: 80, f: "0.000", val: k_("pi") }, // AU pi total_power_export_t2_kwh
-  { h: "Tarief",             w: 50, f: "0",     val: k_("pj") }, // AV pj active_tariff (1 = dag, 2 = nacht)
-  { h: "Kwartier (W)",       w: 65, f: "0",     val: k_("pk") }, // AW pk active_power_average_w (capaciteitstarief)
-  { h: "Maandpiek (W)",      w: 70, f: "0",     val: k_("pl") }, // AX pl montly_power_peak_w
-  { h: "U L1 (V)",           w: 55, f: "0.0",   val: k_("pm") }, // AY pm active_voltage_l1_v
-  { h: "U L2 (V)",           w: 55, f: "0.0",   val: k_("pn") }, // AZ pn active_voltage_l2_v
-  { h: "U L3 (V)",           w: 55, f: "0.0",   val: k_("po") }, // BA po active_voltage_l3_v
-  { h: "I L1 (A)",           w: 55, f: "0.00",  val: k_("pp") }, // BB pp active_current_l1_a
-  { h: "I L2 (A)",           w: 55, f: "0.00",  val: k_("pq") }, // BC pq active_current_l2_a
-  { h: "I L3 (A)",           w: 55, f: "0.00",  val: k_("pr") }, // BD pr active_current_l3_a
-  { h: "Gas (m³)",           w: 75, f: "0.000", val: k_("ps") }, // BE ps total_gas_m3
-  { h: "Gas tijd",           w: 125, val: function (d) { return gasTime_(d.pt); } }, // BF pt gas_timestamp
-  { h: "Stroomuitval",       w: 65, f: "0",     val: k_("pu") }, // BG pu long_power_fail_count
-  { h: "Dongle Wi-Fi (%)",   w: 65, f: "0",     val: k_("pv") }, // BH pv wifi_strength van de dongle
+  // ---- 3. Andere temperaturen (DS18B20) ----
+  { h: "Kelder (°C)",    w: 60,  f: "0.0", val: k_("E") },                                                // N  E
+  { h: "Ketelpomp (°C)", w: 65,  f: "0.0", val: k_("F") },                                                // O  F
+  { h: "Retour (°C)",    w: 60,  f: "0.0", val: k_("G") },                                                // P  G
 
-  // ---- BI..BK: watermeter (v1.3, uitleesmethode nog te bepalen) ----
-  { h: "Water status",       w: 60, f: "0",     val: k_("wa") }, // BI wa 0 OK, 1 geen antwoord, 2 niet ingesteld
-  { h: "Water (m³)",         w: 75, f: "0.000", val: k_("wb") }, // BJ wb meterstand
-  { h: "Debiet (l/min)",     w: 65, f: "0.0",   val: k_("wc") }, // BK wc
+  // ---- 4. Sanitair warm water ----
+  { h: "SWW-boiler",     w: 70,  f: "0",   val: k_("K") },                                                // Q  K SWW-boiler aanwezig (0/1)
+  { h: "SWW pomp",       w: 55,  f: "0",   val: function (d) { return d.i ? 1 : 0; } },                  // R  i
+  { h: "SWW Set (°C)",   w: 65,  val: function (d) { return d.j || 0; } },                                // S  j
+  { h: "Boiler (°C)",    w: 60,  f: "0.0", val: k_("k") },                                                // T  k
+
+  // ---- 5. Elektriciteit en gas (HomeWizard P1-meter) ----
+  { h: "P1 status",          w: 55, f: "0",     val: k_("pa") }, // U  pa 0 OK, 1 geen antwoord, 2 niet ingesteld, 3 ongeldige data
+  { h: "Vermogen (W)",       w: 70, f: "0",     val: k_("pb") }, // V  pb active_power_w (negatief = injectie)
+  { h: "L1 (W)",             w: 55, f: "0",     val: k_("pc") }, // W  pc
+  { h: "L2 (W)",             w: 55, f: "0",     val: k_("pd") }, // X  pd (leeg bij 1 fase)
+  { h: "L3 (W)",             w: 55, f: "0",     val: k_("pe") }, // Y  pe (leeg bij 1 fase)
+  { h: "Kwartier (W)",       w: 65, f: "0",     val: k_("pk") }, // Z  pk active_power_average_w (capaciteitstarief)
+  { h: "Maandpiek (W)",      w: 70, f: "0",     val: k_("pl") }, // AA pl montly_power_peak_w
+  { h: "Tarief",             w: 50, f: "0",     val: k_("pj") }, // AB pj 1 = dag, 2 = nacht (België, te bevestigen)
+  { h: "Afname dag (kWh)",   w: 80, f: "0.000", val: k_("pf") }, // AC pf
+  { h: "Afname nacht (kWh)", w: 80, f: "0.000", val: k_("pg") }, // AD pg
+  { h: "Injectie dag (kWh)", w: 80, f: "0.000", val: k_("ph") }, // AE ph
+  { h: "Injectie nacht (kWh)",w: 80, f: "0.000", val: k_("pi") }, // AF pi
+  { h: "U L1 (V)",           w: 55, f: "0.0",   val: k_("pm") }, // AG pm
+  { h: "U L2 (V)",           w: 55, f: "0.0",   val: k_("pn") }, // AH pn
+  { h: "U L3 (V)",           w: 55, f: "0.0",   val: k_("po") }, // AI po
+  { h: "I L1 (A)",           w: 55, f: "0.00",  val: k_("pp") }, // AJ pp
+  { h: "I L2 (A)",           w: 55, f: "0.00",  val: k_("pq") }, // AK pq
+  { h: "I L3 (A)",           w: 55, f: "0.00",  val: k_("pr") }, // AL pr
+  { h: "Stroomuitval",       w: 65, f: "0",     val: k_("pu") }, // AM pu long_power_fail_count
+  { h: "Gas (m³)",           w: 75, f: "0.000", val: k_("ps") }, // AN ps total_gas_m3
+  { h: "Gas tijd",           w: 125, val: function (d) { return gasTime_(d.pt); } }, // AO pt gas_timestamp
+  { h: "Dongle Wi-Fi (%)",   w: 65, f: "0",     val: k_("pv") }, // AP pv
+
+  // ---- 6. Water ----
+  { h: "Water status",       w: 60, f: "0",     val: k_("wa") }, // AQ wa 0 OK, 1 geen antwoord, 2 niet ingesteld
+  { h: "Water (m³)",         w: 75, f: "0.000", val: k_("wb") }, // AR wb meterstand
+  { h: "Debiet (l/min)",     w: 65, f: "0.0",   val: k_("wc") }, // AS wc
+
+  // ---- 7. Licht, pixels en beweging ----
+  { h: "Licht LDR",      w: 55,  val: function (d) { return d.l || 0; } },                                // AT l
+  { h: "Nacht",          w: 45,  val: function (d) { return d.m || 0; } },                                // AU m
+  { h: "Bed",            w: 40,  val: function (d) { return d.n || 0; } },                                // AV n
+  { h: "R",              w: 35,  val: function (d) { return d.o || 0; } },                                // AW o
+  { h: "G",              w: 35,  val: function (d) { return d.p || 0; } },                                // AX p
+  { h: "B",              w: 35,  val: function (d) { return d.q || 0; } },                                // AY q
+  { h: "Pixels aan",     w: 110, val: function (d) { return d.r || "P=00000000"; } },                     // AZ r (tekst, bewaart nullen)
+  { h: "Pixel mode",     w: 70,  val: function (d) { return d.s || 0; } },                                // BA s
+  { h: "MOV1",           w: 45,  val: function (d) { return d.t || 0; } },                                // BB t
+
+  // ---- 8. Controller en diagnose ----
+  { h: "RSSI (dBm)",     w: 60,  val: function (d) { return d.u || 0; } },                                // BC u
+  { h: "Heap vrij (KB)", w: 70,  val: function (d) { return d.v || 0; } },                                // BD v
+  { h: "Heap blok (KB)", w: 70,  val: function (d) { return d.w || 0; } },                                // BE w
+  { h: "Reset",          w: 80,  val: function (d) { return d.z || ""; } },                               // BF z
+  { h: "Boots",          w: 50,  val: k_("A") },                                                          // BG A
+  { h: "POST fouten",    w: 60,  val: k_("D") },                                                          // BH D
+  { h: "DS count",       w: 55,  val: function (d) { return d.x || 0; } },                                // BI x
+  { h: "DHT reeks",      w: 55,  val: k_("B") },                                                          // BJ B
+  { h: "DHT fouten",     w: 55,  val: k_("C") },                                                          // BK C
 ];
 const NUM_COLS = COLUMNS.length;  // 63 = A..BK
 
@@ -411,6 +417,35 @@ function testAlarm() {        // simuleert kamer 2,5 / boiler 3,5 / kelder 1,5 �
 }
 function resetAlarmState() {  // wist ALLE alarmtoestand (na tests); "geen data" start opnieuw bij de volgende POST
   PropertiesService.getScriptProperties().deleteAllProperties();
+}
+
+// ============================================================
+// EENMALIG BIJ DE OVERSTAP NAAR v1.3 — Uitvoeren → archiveerEnNieuweKoppen
+// (nodig omdat de kolomvolgorde verandert; zelfde werkwijze als ROOM-script v1.6)
+// ============================================================
+const ARCHIVE_NAME = "Archief v1.2";
+function archiveerEnNieuweKoppen() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = getLogSheet_();
+  if (sheet.getFilter()) sheet.getFilter().remove();
+
+  // 1. Kopie van het hele tabblad als archief (oude kolomindeling blijft leesbaar)
+  let naam = ARCHIVE_NAME;
+  if (ss.getSheetByName(naam)) naam += " " + Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd HH:mm");
+  const archief = sheet.copyTo(ss).setName(naam);
+  ss.setActiveSheet(archief);
+  ss.moveActiveSheet(ss.getNumSheets());
+  Logger.log("Archief gemaakt: " + naam + " (" + (sheet.getLastRow() - HEADER_ROWS) + " rijen)");
+
+  // 2. "Data" leegmaken (koppen en data), één lege rij laten staan; setupHeaders voegt rij 1 en 2 in
+  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clear().clearDataValidations();
+  if (sheet.getMaxRows() > 1) sheet.deleteRows(2, sheet.getMaxRows() - 1);
+
+  // 3. Nieuwe koppen + keuzelijst
+  PropertiesService.getDocumentProperties().deleteProperty("rooms");
+  setupHeaders();
+  ss.setActiveSheet(sheet);
+  Logger.log("Data leeggemaakt en koppen v1.3 gezet.");
 }
 
 // ============================================================
