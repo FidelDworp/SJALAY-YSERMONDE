@@ -278,6 +278,8 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 
 ## B7. Plan en openstaande punten
 
+> **24/11: Ysermonde-variant (Nieuwpoort).** Dezelfde sketch wordt ook gebruikt voor het vakantiehuisje in Ysermonde, met keuzes in `/settings` (verwarming, SWW, HomeWizard P1-meter, login bij port forwarding). Volledig plan en nieuwe versievolgorde (v1.12 functies → v1.13 P1 → v1.14 login → v1.15/v1.16 SCD41): [`docs/YSERMONDE_PLAN.md`](docs/YSERMONDE_PLAN.md). De SCD41-versies hieronder (Stap D) schuiven daardoor op naar v1.15 en v1.16.
+
 Werkwijze: telkens één stap, **eerst akkoord van Filip**, daarna sketch, script en README samen bijwerken.
 
 **Bevindingen uit de log 23–28/10 (1323 rijen, interval 5 min)**

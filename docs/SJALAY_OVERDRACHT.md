@@ -1,4 +1,4 @@
-# Overdracht — Sjalay-controller (SJALAY-YSERMONDE)
+# Overdracht — Sjalay- en Ysermonde-controller (SJALAY-YSERMONDE)
 
 *Stand 11 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
@@ -27,6 +27,8 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 - De Sjalay is de bron van de "goodies" voor ROOM v3.7/v3.8 (temperatuurbewaking, verwarmingslogica; planning 9/11).
 
 ## 3. Open punten
+
+0. **Ysermonde-variant (24/11, plan goedgekeurd door Filip, code nog na GO):** één sketch voor Sjalay en Ysermonde (Nieuwpoort), verschillen als keuzes in `/settings`. Eerst een Ysermonde-controller die enkel de HomeWizard P1-meter uitleest en naar een eigen Sheet logt. Volgorde: **v1.12** functies (verwarming/SWW aan-uit) → **v1.13** HomeWizard P1 + logger v1.3 → **v1.14** login (landingspagina open op Wi-Fi, rest achter login; port forwarding, géén RPi) → **v1.15/v1.16** SCD41. Alles in [`docs/YSERMONDE_PLAN.md`](YSERMONDE_PLAN.md). Wi-Fi-gegevens NIET in de repo.
 
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
