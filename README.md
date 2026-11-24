@@ -266,21 +266,21 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `D` | Mislukte Google-POSTs sinds boot (telt nu elke POST, zie sketch-todo) | POST fouten |
 | `E` / `F` / `G` | DS18B20 kelder / ketelpomp / retour (`null` = niet toegewezen of defect) | Kelder / Ketelpomp / Retour (°C) |
 | **Vanaf Apps Script v1.3 (24/11): volledig eindschema, de sketch vult ze vanaf de versie tussen haakjes; ontbrekende key = lege cel** | | |
-| `H` | CO2 (ppm), `null` zonder sensor (v1.15) | AI CO2 (ppm) |
-| `I` | Bron vocht/dauwpunt: 0 = DHT22, 1 = SCD41, 2 = laatste geldige (v1.16) | AJ Vocht-bron |
-| `J` / `K` | Functie aanwezig: verwarming / SWW-boiler (0/1) (v1.12) | AK Verwarming / AL SWW-boiler |
-| `pa` | HomeWizard P1: status 0 = OK, 1 = geen antwoord, 2 = niet ingesteld, 3 = ongeldige data (v1.13) | AM P1 status |
-| `pb` / `pc` / `pd` / `pe` | Vermogen totaal / L1 / L2 / L3 (W, negatief = injectie; L2/L3 `null` bij 1 fase) | AN Vermogen / AO–AQ L1–L3 (W) |
-| `pf` / `pg` | Meterstand afname dag (T1) / nacht (T2) (kWh) | AR / AS |
-| `ph` / `pi` | Meterstand injectie dag / nacht (kWh) | AT / AU |
-| `pj` | Actief tarief (België: 1 = dag, 2 = nacht; te bevestigen met de Fluvius-site) | AV Tarief |
-| `pk` / `pl` | Kwartiervermogen (gemiddelde, W) / maandpiek (W), voor het capaciteitstarief | AW Kwartier / AX Maandpiek |
-| `pm` / `pn` / `po` | Spanning L1 / L2 / L3 (V) | AY–BA |
-| `pp` / `pq` / `pr` | Stroom L1 / L2 / L3 (A) | BB–BD |
-| `ps` / `pt` | Gasmeterstand (m³) / tijdstip van die gasmeting (`yymmddhhmmss` van de meter; Sheet toont `jjjj-mm-dd uu:mm:ss`) | BE Gas / BF Gas tijd |
-| `pu` | Aantal lange stroomonderbrekingen (meter) | BG Stroomuitval |
-| `pv` | Wi-Fi-sterkte van de dongle (%) | BH Dongle Wi-Fi |
-| `wa` / `wb` / `wc` | Watermeter: status (0 OK, 1 geen antwoord, 2 niet ingesteld) / meterstand (m³) / debiet (l/min) (later) | BI–BK |
+| `H` | CO2 (ppm), `null` zonder sensor (v1.15) | CO2 (ppm) |
+| `I` | Bron vocht/dauwpunt: 0 = DHT22, 1 = SCD41, 2 = laatste geldige (v1.16) | Vocht-bron |
+| `J` / `K` | Functie aanwezig: verwarming / SWW-boiler (0/1) (v1.12) | Verwarming / SWW-boiler |
+| `pa` | HomeWizard P1: status 0 = OK, 1 = geen antwoord, 2 = niet ingesteld, 3 = ongeldige data (v1.13) | P1 status |
+| `pb` / `pc` / `pd` / `pe` | Vermogen totaal / L1 / L2 / L3 (W, negatief = injectie; L2/L3 `null` bij 1 fase) | Vermogen / L1–L3 (W) |
+| `pf` / `pg` | Meterstand afname dag (T1) / nacht (T2) (kWh) | Afname dag / nacht (kWh) |
+| `ph` / `pi` | Meterstand injectie dag / nacht (kWh) | Injectie dag / nacht (kWh) |
+| `pj` | Actief tarief (België: 1 = dag, 2 = nacht; te bevestigen met de Fluvius-site) | Tarief |
+| `pk` / `pl` | Kwartiervermogen (gemiddelde, W) / maandpiek (W), voor het capaciteitstarief | Kwartier / Maandpiek (W) |
+| `pm` / `pn` / `po` | Spanning L1 / L2 / L3 (V) | U L1–L3 (V) |
+| `pp` / `pq` / `pr` | Stroom L1 / L2 / L3 (A) | I L1–L3 (A) |
+| `ps` / `pt` | Gasmeterstand (m³) / tijdstip van die gasmeting (`yymmddhhmmss` van de meter; Sheet toont `jjjj-mm-dd uu:mm:ss`) | Gas (m³) / Gas tijd |
+| `pu` | Aantal lange stroomonderbrekingen (meter) | Stroomuitval |
+| `pv` | Wi-Fi-sterkte van de dongle (%) | Dongle Wi-Fi (%) |
+| `wa` / `wb` / `wc` | Watermeter: status (0 OK, 1 geen antwoord, 2 niet ingesteld) / meterstand (m³) / debiet (l/min) (later) | Water status / Water (m³) / Debiet (l/min) |
 
 **Apps Script v1.3 (24/11):** **nieuwe kolomvolgorde per soort data** (zoals de ROOM-Sheet): A–C identiteit · D–M verwarming en binnenklimaat (incl. CO2, vocht-bron) · N–P andere temperaturen · Q–T SWW · U–AP elektriciteit en gas (P1) · AQ–AS water · AT–BB licht, pixels, beweging · BC–BK controller en diagnose. De Sheet-kolomnamen in de tabel hierboven blijven geldig, de letters niet meer. Overstap: `archiveerEnNieuweKoppen()` eenmalig (oude rijen naar tabblad "Archief v1.2"); grafieken opnieuw instellen. Volledig eindschema (A–BK, tabel `COLUMNS` in het script: kop, key, notatie, breedte; nieuwe kolommen enkel achteraan). **Eén Sheet en één URL voor alle huizen** (zoals de ROOM-Sheet): keuzelijst **huisfilter in C1** (ALL of één huis; verbergt rijen, wist niets; grafieken volgen het filter), titel in D1, `rebuildRoomList()` bouwt de lijst uit kolom C. Alarm **per huis** (eigen toestand en eigen "geen data"-controle per room-naam, naam in het onderwerp); boileralarm enkel als `K` ≠ 0. `MAX_ROWS` 50 000 voor alle huizen samen (±87 dagen per huis bij 2 huizen). Tests: `test()` (Sjalay-rij), `testYsermonde()` (P1-rij). Uitrollen: plakken, opslaan, Nieuwe versie implementeren, `setupHeaders()` eenmalig.
 
