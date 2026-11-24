@@ -6,8 +6,8 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.11, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
-| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Alleen de laatste versie |
+| **Sketch** | v1.12, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.12.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Normaal alleen de laatste versie; `v1.11` blijft als terugvaloptie tot v1.12 getest is |
 | **Apps Script** | v1.3 in de repo (24/11, eindschema 63 kolommen A–BK, één Sheet voor Sjalay én Ysermonde met huisfilter in C1; nog te implementeren), v1.2 draait (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
@@ -195,7 +195,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.11)
+## B5. De sketch (v1.12)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -222,6 +222,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.2 | `/json` naar compact schema met letter-sleutels; nieuw Apps Script |
 | v1.3 | Veld `y` (effectief setpoint) in `/json`, enkel voor de live-UI |
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
+| v1.12 (25/11) | Functies in `/settings`: "Verwarming aanwezig" en "SWW-boiler aanwezig" (NVS `f_heat`/`f_sww`, standaard ja). Uit = relais altijd uit, bediening en kaart verborgen (verwarming: metingen blijven als "Binnenklimaat"; SWW: hele blok weg). `/json` + `J`/`K`. Eerste stap van de Ysermonde-variant (`docs/YSERMONDE_PLAN.md`) |
 | v1.11 (20/11) | Vorstfix: `SENSOR_TEMP_MIN` 5 → −10 °C (kamer: DS18B20 en DHT22-terugval) en `SENSOR_BOILER_MIN` 0 → −10 °C. Onder 5 °C gold de kamersensor als defect → met de DHT22 weg werd de verwarming geblokkeerd, net wanneer vorstbeveiliging nodig is (15/11 02:16–11:01). Patroon gezien door Filip. Verder niets gewijzigd |
 | v1.10 (11/11) | Eigen DHT22-uitlezing `dhtRead22()` (uit ROOM v3.4.4) i.p.v. de Adafruit-bibliotheek, die de interrupts seconden kon uitzetten (oorzaak van de `INT_WDT`-herstarts van 25/10); interrupts nu hooguit ±5 ms uit. Teller "fouten op rij" (`B`) 32-bit (bleef op 65535 steken en gaf dan bij elke lezing een herinit). `/advanced` → Controller: NVS-bezetting per naamruimte (enkel tonen). OTA robuuster: een vastgelopen update wordt bij een nieuwe upload afgebroken, "Update mislukt!" toont de reden, herstart 3 s na "Update OK" vanuit `loop()` (antwoord komt ook via 4G aan). `/json`, Settings en Sheet ongewijzigd |
 | v1.9 (10/11) | USB-pinnen vrij (stap 1 van 3 voor de SCD41): compileren met USB CDC On Boot = Disabled en `releaseUsbPins()` bij het opstarten, zodat IO12/IO13 los zijn van de ingebouwde USB (zoals ROOM v3.4.2). Verder niets gewijzigd: `/json`, Settings en Sheet zoals v1.8 |
@@ -268,7 +269,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | **Vanaf Apps Script v1.3 (24/11): volledig eindschema, de sketch vult ze vanaf de versie tussen haakjes; ontbrekende key = lege cel** | | |
 | `H` | CO2 (ppm), `null` zonder sensor (v1.15) | CO2 (ppm) |
 | `I` | Bron vocht/dauwpunt: 0 = DHT22, 1 = SCD41, 2 = laatste geldige (v1.16) | Vocht-bron |
-| `J` / `K` | Functie aanwezig: verwarming / SWW-boiler (0/1) (v1.12) | Verwarming / SWW-boiler |
+| `J` / `K` | Functie aanwezig: verwarming / SWW-boiler (0/1) (sinds v1.12) | Verwarming / SWW-boiler |
 | `pa` | HomeWizard P1: status 0 = OK, 1 = geen antwoord, 2 = niet ingesteld, 3 = ongeldige data (v1.13) | P1 status |
 | `pb` / `pc` / `pd` / `pe` | Vermogen totaal / L1 / L2 / L3 (W, negatief = injectie; L2/L3 `null` bij 1 fase) | Vermogen / L1–L3 (W) |
 | `pf` / `pg` | Meterstand afname dag (T1) / nacht (T2) (kWh) | Afname dag / nacht (kWh) |

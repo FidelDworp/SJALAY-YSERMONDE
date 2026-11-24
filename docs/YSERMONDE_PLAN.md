@@ -51,7 +51,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 
 | Versie | Inhoud | Test |
 |---|---|---|
-| **v1.12** | **Functies in `/settings`:** "Verwarming aanwezig" ja/nee en "SWW-boiler aanwezig" ja/nee. Uit = relais blijven uit, bijhorende sensoren/meldingen/UI-blokken verdwijnen, geen vorstalarm voor wat er niet is. Sjalay: alles aan, gedrag ongewijzigd. | Sjalay: alles werkt zoals v1.11 |
+| **v1.12** ✅ code klaar 25/11 | **Functies in `/settings`:** "Verwarming aanwezig" ja/nee en "SWW-boiler aanwezig" ja/nee. Uit = relais blijven uit, bijhorende sensoren/meldingen/UI-blokken verdwijnen, geen vorstalarm voor wat er niet is. Sjalay: alles aan, gedrag ongewijzigd. | Sjalay: alles werkt zoals v1.11 |
 | **v1.13** | **HomeWizard P1** (sectie 4); logger v1.3 is al klaar (24/11). Ysermonde-controller in dienst: verwarming uit, SWW uit, P1-IP ingevuld, eigen Sheet. | Sjalay: geen verschil (geen dongle). Ysermonde: meterstanden en vermogen in de Sheet |
 | **v1.14** | **Login en beveiliging** (sectie 3). Pas nodig als de router de controller naar buiten brengt. | Ysermonde: login van buitenaf, landingspagina open op Wi-Fi |
 | **v1.15** | SCD41: CO2 + key `H` + Sheet-kolommen AI/AJ (was v1.12) | met sensor |

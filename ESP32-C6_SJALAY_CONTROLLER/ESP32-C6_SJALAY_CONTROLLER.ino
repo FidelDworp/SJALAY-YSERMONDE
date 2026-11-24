@@ -1,5 +1,5 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.11 — 20 nov 2026
+// SJALAY CONTROLLER — v1.12 — 25 nov 2026
 // Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -175,6 +175,18 @@
 //                en DS_FAIL_THRESHOLD; de DHT22 via zijn eigen controlesom en fouttellers.
 //                Verder niets gewijzigd: /json, Settings en Sheet zoals v1.10 (Apps Script v1.2).
 // ----------------------------------------------------------------------------
+// v1.12 (25nov26): FUNCTIES IN /settings — één sketch voor Sjalay én Ysermonde (docs/YSERMONDE_PLAN.md).
+//                Nieuw blok "Functies" in /settings: "Verwarming aanwezig" en "SWW-boiler aanwezig"
+//                (NVS "f_heat" / "f_sww", standaard JA -> Sjalay werkt exact zoals v1.11).
+//                Functie UIT:
+//                 - relais 1 (verwarming) resp. relais 2 (SWW) blijft ALTIJD uit, ook in handmatige modus;
+//                 - verwarming: bedieningsrijen (modus, relais, setpoint, effectief setpoint, ketelvraag,
+//                   duty, hysterese) en de verwarmingskaart op de landingspagina verborgen; de metingen
+//                   (DHT22, dauwpunt, kamertemperatuur) blijven zichtbaar als "Binnenklimaat";
+//                 - SWW: het hele SWW-blok op /advanced en de SWW-kaart op de landingspagina verborgen.
+//                /json: nieuwe keys J = verwarming aanwezig (0/1), K = SWW-boiler aanwezig (0/1)
+//                (eindschema Apps Script v1.3). Geen andere keys gewijzigd.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -217,7 +229,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.11"
+#define SJALAY_VERSION "1.12"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -332,6 +344,10 @@ char boiler_melding[48] = "";
 bool room_temp_reliable = true;    // false = kamer-DS én DHT22 beide defect -> verwarming geblokkeerd
 bool room_temp_fallback = false;   // true = DS18B20 (kamer) uitgevallen, DHT22 neemt het over
 bool boiler_temp_reliable = true;  // false = geen bruikbare boilersensor -> SWW-pomp geblokkeerd
+
+// v1.12: functies (Sjalay: beide aan; Ysermonde: geen SWW, verwarming naar keuze)
+bool feat_heat = true;            // verwarming aanwezig (relais 1)
+bool feat_sww  = true;            // SWW-boiler aanwezig (relais 2)
 
 // Verwarmingslogica / relais 1 (WOLF E1)
 bool heating_auto = false;        // false = handmatige modus (default, voor test zonder sensoren)
@@ -879,6 +895,7 @@ void updateHeatingLogic() {
 
   if (room_temp >= HEATING_SETPOINT_MAX) new_state = false;  // veiligheidsgrens
   if (!room_temp_reliable) new_state = false;                // geen betrouwbare data
+  if (!feat_heat) new_state = false;                         // v1.12: geen verwarming in dit huis
 
   if (new_state != heating_on) {
     heating_on = new_state;
@@ -903,6 +920,7 @@ void updateSWWLogic() {
 
   if (temp_boiler >= BOILER_SETPOINT_MAX) new_state = false;  // veiligheidsgrens
   if (!boiler_temp_reliable) new_state = false;                // geen bruikbare boilersensor
+  if (!feat_sww) new_state = false;                            // v1.12: geen SWW-boiler in dit huis
 
   if (new_state != sww_on) {
     sww_on = new_state;
@@ -1222,7 +1240,8 @@ String getJSON() {
     "\"i\":%d,\"j\":%d,\"k\":%.1f,"
     "\"l\":%d,\"m\":%d,\"n\":%d,\"o\":%d,\"p\":%d,\"q\":%d,\"r\":\"%s\",\"s\":%d,\"t\":%d,"
     "\"u\":%d,\"v\":%u,\"w\":%u,\"x\":%d,\"y\":%.1f,"
-    "\"z\":\"%s\",\"A\":%u,\"B\":%u,\"C\":%u,\"D\":%u,\"E\":%s,\"F\":%s,\"G\":%s}",
+    "\"z\":\"%s\",\"A\":%u,\"B\":%u,\"C\":%u,\"D\":%u,\"E\":%s,\"F\":%s,\"G\":%s,"
+    "\"J\":%d,\"K\":%d}",
     room_id,
     upt, heating_on ? 1 : 0, heating_setpoint, room_temp, e_s, f_s, dew, dew_alert ? 1 : 0,
     sww_on ? 1 : 0, boiler_setpoint, temp_boiler,
@@ -1230,7 +1249,8 @@ String getJSON() {
     ap_mode_active ? 0 : WiFi.RSSI(), (unsigned)(ESP.getFreeHeap()/1024), (unsigned)(ESP.getMaxAllocHeap()/1024), ds_count,
     effective_setpoint,   // y: effectieve setpoint (dauwpuntcorrectie) — enkel voor live-UI, bewust niet gelogd naar Sheets
     reset_reason_txt, (unsigned)boot_count, (unsigned)dht_fail_streak, (unsigned)dht_fail_total, (unsigned)sheets_fail_total,
-    E_s, F_s, G_s);       // v1.4: z reset-reden, A boots, B DHT-reeks, C DHT-fouten, D POST-fouten, E/F/G kelder/ketelpomp/retour
+    E_s, F_s, G_s,        // v1.4: z reset-reden, A boots, B DHT-reeks, C DHT-fouten, D POST-fouten, E/F/G kelder/ketelpomp/retour
+    feat_heat ? 1 : 0, feat_sww ? 1 : 0);   // v1.12: J/K functies aanwezig
   return String(buf);
 }
 
@@ -1277,6 +1297,8 @@ void loadConfigFromNVS() {
   relay2_manual   = preferences.getBool("relay2_man", false);
   boiler_setpoint = constrain(preferences.getInt("boiler_sp", 40), sww_min, 60);
   hyst_sww        = constrain(preferences.getFloat("hyst_sww", 5.0), 0.5f, 15.0f);
+  feat_heat       = preferences.getBool("f_heat", true);   // v1.12
+  feat_sww        = preferences.getBool("f_sww", true);    // v1.12
 }
 
 void loadPixelConfigFromNVS() {
@@ -1407,12 +1429,13 @@ void handleLanding(AsyncWebServerRequest *request) {
   // dauwpuntcorrectie) samen op één lijn, in de kaartkleur: groot IST eerst, dan kleiner
   // "(-> X°)" tussen haakjes met spatie ervoor - live bijgewerkt tijdens het schuiven en
   // nadien gesynchroniseerd met de echte effectieve setpoint via /json.
-  p->printf("<div class=\"card heat\"><div class=\"icring%s\" id=\"ic-heat\">&#128293;</div>"
+  p->printf("<div class=\"card heat\"%s><div class=\"icring%s\" id=\"ic-heat\">&#128293;</div>"
     "<div class=\"big\"><span id=\"v-rt\">%s</span><span class=\"soll\" id=\"v-heff-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
     "<input type=\"range\" id=\"sl-hsp\" min=\"%d\" max=\"30\" value=\"%d\" "
     "oninput=\"document.getElementById('v-heff-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_setpoint',this.value)\"></form></div>",
+    feat_heat ? "" : " style=\"display:none\"",   // v1.12
     heating_on ? " active" : "",
     room_temp_reliable ? (String(room_temp, 1) + "&deg;").c_str() : "n.v.t.",
     (int)round(effective_setpoint), heat_min, heating_setpoint);
@@ -1420,12 +1443,13 @@ void handleLanding(AsyncWebServerRequest *request) {
   // ---- SWW ----
   // Idem: groot IST (gemeten boilertemp), klein "(-> X°)" = SOLL (setpoint; voor SWW
   // momenteel gelijk aan de effectieve doeltemp, geen aparte correctie zoals bij verwarming).
-  p->printf("<div class=\"card sww\"><div class=\"icring%s\" id=\"ic-sww\">&#128703;</div>"
+  p->printf("<div class=\"card sww\"%s><div class=\"icring%s\" id=\"ic-sww\">&#128703;</div>"
     "<div class=\"big\"><span id=\"v-bt\">%s</span><span class=\"soll\" id=\"v-bsp-t\"> (&rarr; %d&deg;)</span></div>"
     "<form action=\"/set_boiler_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();\">"
     "<input type=\"range\" id=\"sl-bsp\" min=\"%d\" max=\"60\" value=\"%d\" "
     "oninput=\"document.getElementById('v-bsp-t').textContent=' (\xe2\x86\x92 '+this.value+'\xc2\xb0)'\" "
     "onchange=\"setVal('/set_boiler_setpoint',this.value)\"></form></div>",
+    feat_sww ? "" : " style=\"display:none\"",   // v1.12
     sww_on ? " active" : "",
     boiler_temp_reliable ? (String(temp_boiler, 1) + "&deg;").c_str() : "n.v.t.",
     boiler_setpoint, sww_min, boiler_setpoint);
@@ -1493,29 +1517,31 @@ void handleStatus(AsyncWebServerRequest *request) {
   writeSidebar(p, "status");
   p->print("<div class=\"main\">");
 
-  p->print("<div class=\"group-title\">Verwarming</div><table>");
-  p->printf("<tr><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-hauto\">%s</td>"
+  // v1.12: zonder verwarming enkel de metingen tonen (bedieningsrijen verborgen via HH)
+  const char* HH = feat_heat ? "" : " style=\"display:none\"";
+  p->printf("<div class=\"group-title\">%s</div><table>", feat_heat ? "Verwarming" : "Binnenklimaat");
+  p->printf("<tr%s><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-hauto\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_heating_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-hauto\"%s onchange=\"submitAjax(this.form);\">"
     "<span class=\"slider-switch\"></span></label></form></td></tr>",
-    heating_auto ? "AAN" : "UIT", heating_auto ? " checked" : "");
+    HH, heating_auto ? "AAN" : "UIT", heating_auto ? " checked" : "");
 
-  p->printf("<tr><td class=\"label\">Relais (handmatig)<br><span style=\"font-size:11px;color:#888;\">genegeerd in automatisch</span></td>"
+  p->printf("<tr%s><td class=\"label\">Relais (handmatig)<br><span style=\"font-size:11px;color:#888;\">genegeerd in automatisch</span></td>"
     "<td class=\"value\" id=\"v-rman\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_relay_manual\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-rman\"%s onchange=\"submitAjax(this.form);\">"
     "<span class=\"slider-switch\"></span></label></form></td></tr>",
-    relay_manual ? "AAN" : "UIT", relay_manual ? " checked" : "");
+    HH, relay_manual ? "AAN" : "UIT", relay_manual ? " checked" : "");
 
-  p->printf("<tr><td class=\"label\">Setpoint</td><td class=\"value\" id=\"v-hsp\">%d &deg;C</td>"
+  p->printf("<tr%s><td class=\"label\">Setpoint</td><td class=\"value\" id=\"v-hsp\">%d &deg;C</td>"
     "<td class=\"control\"><form action=\"/set_setpoint\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<input type=\"range\" class=\"slider\" id=\"sl-hsp\" name=\"value\" min=\"%d\" max=\"30\" value=\"%d\" onchange=\"submitAjax(this.form);\">"
-    "</form></td></tr>", heating_setpoint, heat_min, heating_setpoint);
+    "</form></td></tr>", HH, heating_setpoint, heat_min, heating_setpoint);
   { char humTxt[16];
     if (isnan(humi)) strlcpy(humTxt, "n.v.t.", sizeof(humTxt));
     else snprintf(humTxt, sizeof(humTxt), "%.0f%%", humi);
-    p->printf("<tr><td class=\"label\">Effectieve setpoint met %% vochtigheid</td><td class=\"value\" id=\"v-heff\" colspan=\"2\">%.1f &deg;C (vocht %s)</td></tr>",
-      effective_setpoint, humTxt);
+    p->printf("<tr%s><td class=\"label\">Effectieve setpoint met %% vochtigheid</td><td class=\"value\" id=\"v-heff\" colspan=\"2\">%.1f &deg;C (vocht %s)</td></tr>",
+      HH, effective_setpoint, humTxt);
   }
   p->printf("<tr><td class=\"label\">DHT22 temp</td><td class=\"value\" id=\"v-t2\" colspan=\"2\">%s</td></tr>",
     !dht_ever_valid ? "geen meting sinds start" : ((String(temp_dht, 1) + " &deg;C") + (dht_ok ? "" : " (vastgehouden)")).c_str());
@@ -1544,14 +1570,15 @@ void handleStatus(AsyncWebServerRequest *request) {
   { const char* tm_color = !room_temp_reliable ? "#c00" : (room_temp_fallback ? "#e67e22" : "#2a9d2a");
     p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-tm\" colspan=\"2\" style=\"color:%s;\">%s</td></tr>", tm_color, temp_melding);
   }
-  p->printf("<tr><td class=\"label\">Ketelvraag</td><td class=\"value\" id=\"v-hon\" colspan=\"2\">"
+  p->printf("<tr%s><td class=\"label\">Ketelvraag</td><td class=\"value\" id=\"v-hon\" colspan=\"2\">"
     "<span class=\"dot\" style=\"background:%s\"></span> %s</td></tr>",
-    heating_on ? "#e05c00" : "#bbb", heating_on ? "AAN" : "UIT");
-  p->printf("<tr><td class=\"label\">Duty-cyclus (laatste 4u)</td><td class=\"value\" id=\"v-duty\" colspan=\"2\">%.0f %%</td></tr>", getDutyPercent());
-  p->printf("<tr><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hcv\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", hyst_cv);
+    HH, heating_on ? "#e05c00" : "#bbb", heating_on ? "AAN" : "UIT");
+  p->printf("<tr%s><td class=\"label\">Duty-cyclus (laatste 4u)</td><td class=\"value\" id=\"v-duty\" colspan=\"2\">%.0f %%</td></tr>", HH, getDutyPercent());
+  p->printf("<tr%s><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hcv\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", HH, hyst_cv);
   p->print("</table>");
 
-  p->print("<div class=\"group-title\">SWW boiler</div><table>");
+  // v1.12: zonder SWW-boiler het hele blok verbergen (elementen blijven bestaan voor de live-update)
+  p->printf("<div%s><div class=\"group-title\">SWW boiler</div><table>", feat_sww ? "" : " style=\"display:none\"");
   p->printf("<tr><td class=\"label\">Automatische modus</td><td class=\"value\" id=\"v-swauto\">%s</td>"
     "<td class=\"control\"><form action=\"/toggle_sww_auto\" method=\"get\" onsubmit=\"event.preventDefault();submitAjax(this);\">"
     "<label class=\"switch\"><input type=\"checkbox\" id=\"cb-swauto\"%s onchange=\"submitAjax(this.form);\">"
@@ -1574,7 +1601,7 @@ void handleStatus(AsyncWebServerRequest *request) {
     sww_on ? "#0077cc" : "#bbb", sww_on ? "AAN" : "UIT");
   p->printf("<tr><td class=\"label\">Hysterese<br><span style=\"font-size:11px;color:#888;\">instelbaar in Settings</span></td><td class=\"value\" id=\"v-hsww\" colspan=\"2\">&plusmn;%.1f &deg;C</td></tr>", hyst_sww);
   p->printf("<tr><td class=\"label\">Melding</td><td class=\"value\" id=\"v-btm\" colspan=\"2\" style=\"color:#e67e22;\">%s</td></tr>", boiler_melding);
-  p->print("</table>");
+  p->print("</table></div>");   // v1.12: einde SWW-blok
 
   p->print("<div class=\"group-title\">Alle DS18B20-sensoren</div><table id=\"ds-all-table\">");
   p->printf("<tr><td class=\"label\">DS18B20 gevonden</td><td class=\"value\" id=\"v-dsc\" colspan=\"2\">%d %s</td></tr>",
@@ -1792,6 +1819,13 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Static IP (leeg = DHCP)</td><td class=\"control\"><input type=\"text\" name=\"ip\" value=\"%s\" maxlength=\"19\"></td></tr>", static_ip_str);
   p->printf("<tr><td class=\"label\">mDNS-naam<br><span style=\"font-size:11px;color:#888;\">enkel a-z/0-9/streepjes, herstart nodig</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"mdns\" value=\"%s\" maxlength=\"31\"> .local</td></tr>", mdns_name);
+  // v1.12: functies van dit huis
+  p->printf("<tr><td class=\"label\"><b>Functie:</b> verwarming aanwezig<br><span style=\"font-size:11px;color:#888;\">nee = relais 1 altijd uit, bediening verborgen</span></td>"
+    "<td class=\"control\"><select name=\"fheat\"><option value=\"1\"%s>Ja</option><option value=\"0\"%s>Nee</option></select></td></tr>",
+    feat_heat ? " selected" : "", feat_heat ? "" : " selected");
+  p->printf("<tr><td class=\"label\"><b>Functie:</b> SWW-boiler aanwezig<br><span style=\"font-size:11px;color:#888;\">nee = relais 2 altijd uit, SWW verborgen (bv. doorstromer)</span></td>"
+    "<td class=\"control\"><select name=\"fsww\"><option value=\"1\"%s>Ja</option><option value=\"0\"%s>Nee</option></select></td></tr>",
+    feat_sww ? " selected" : "", feat_sww ? "" : " selected");
   p->printf("<tr><td class=\"label\">Dauwpuntmarge (automatische modus)<br><span style=\"font-size:11px;color:#888;\">negatief toegestaan (-10 t/m 10): dan neem je zelf het vochtrisico</span></td><td class=\"control\"><input type=\"number\" name=\"dew\" step=\"0.5\" min=\"-10\" max=\"10\" value=\"%.1f\" style=\"width:60px;\"> &deg;C</td></tr>", dew_margin);
   p->printf("<tr><td class=\"label\">Dauwpuntbeveiliging<br><span style=\"font-size:11px;color:#888;\">uit = het setpoint geldt altijd, zonder verhoging door het dauwpunt</span></td>"
     "<td class=\"control\"><select name=\"dewen\"><option value=\"1\"%s>Aan</option><option value=\"0\"%s>Uit</option></select></td></tr>",
@@ -1899,6 +1933,14 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     dew_margin = request->getParam("dew")->value().toFloat();
     dew_margin = constrain(dew_margin, -10.0f, 10.0f);
     preferences.putFloat("dew_margin", dew_margin);
+  }
+  if (request->hasParam("fheat")) {   // v1.12
+    feat_heat = (request->getParam("fheat")->value().toInt() != 0);
+    preferences.putBool("f_heat", feat_heat);
+  }
+  if (request->hasParam("fsww")) {    // v1.12
+    feat_sww = (request->getParam("fsww")->value().toInt() != 0);
+    preferences.putBool("f_sww", feat_sww);
   }
   if (request->hasParam("dewen")) {   // v1.5
     dew_enabled = (request->getParam("dewen")->value().toInt() != 0);

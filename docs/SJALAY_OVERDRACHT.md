@@ -13,8 +13,8 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 | | |
 |---|---|
 | Plaats | vakantiewoning Sjalay, Recht; internet via 4G, toegang via een RPi 3B+ met Tailscale |
-| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.11** (20/11/2026, draait sinds 20/11 ±19:15), met `partitions.csv` |
-| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin` (enige versie in `bin/`) |
+| Sketch | `ESP32-C6_SJALAY_CONTROLLER/ESP32-C6_SJALAY_CONTROLLER.ino` **v1.12** (25/11/2026; v1.11 draait tot de OTA), met `partitions.csv` |
+| Klaar om te uploaden | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.12.ino.bin`; v1.11 blijft als terugvaloptie tot v1.12 getest is |
 | Logging | Google Sheets via `GoogleScript/SJALAY_SHEETS_LOGGER.gs` v1.2 (met vorstalarm per mail). **Uitzondering:** deze controller post zelf (er is geen Dashboard ter plaatse) |
 | Bibliotheken | OneWireNg (DHT-bibliotheek niet meer sinds v1.10), Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
 
@@ -28,7 +28,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 
 ## 3. Open punten
 
-0. **Ysermonde-variant (24/11, plan goedgekeurd door Filip, code nog na GO):** één sketch voor Sjalay en Ysermonde (Nieuwpoort), verschillen als keuzes in `/settings`. Eerst een Ysermonde-controller die enkel de HomeWizard P1-meter uitleest en naar een eigen Sheet logt. Volgorde: **v1.12** functies (verwarming/SWW aan-uit) → **v1.13** HomeWizard P1 + logger v1.3 → **v1.14** login (landingspagina open op Wi-Fi, rest achter login; port forwarding, géén RPi) → **v1.15/v1.16** SCD41. Alles in [`docs/YSERMONDE_PLAN.md`](YSERMONDE_PLAN.md). Wi-Fi-gegevens NIET in de repo.
+0. **Ysermonde-variant (24/11, plan goedgekeurd door Filip, code nog na GO):** één sketch voor Sjalay en Ysermonde (Nieuwpoort), verschillen als keuzes in `/settings`. Eerst een Ysermonde-controller die enkel de HomeWizard P1-meter uitleest en naar een eigen Sheet logt. Volgorde: **v1.12** functies (verwarming/SWW aan-uit) → **v1.13** HomeWizard P1 + logger v1.3 → **v1.14** login (landingspagina open op Wi-Fi, rest achter login; port forwarding, géén RPi) → **v1.15/v1.16** SCD41. Alles in [`docs/YSERMONDE_PLAN.md`](YSERMONDE_PLAN.md). Wi-Fi-gegevens NIET in de repo. **Stand 25/11: v1.12 (functies) klaar, Filip flasht 25/11 in de Sjalay; Apps Script v1.3 (eindschema, één Sheet voor alle huizen, huisfilter C1) klaar in de repo, nog niet geïmplementeerd.**
 
 1. Oorzaak van de DHT22-uitval vinden (geen vervanging gewenst: dezelfde sensor werkt elders). Relais 3 (IO19) schakelt de sensorrail als noodoplossing.
 2. DS18B20 voor ketelpomp en retour fysiek op de bus hangen.
