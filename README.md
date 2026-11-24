@@ -8,7 +8,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
 | **Sketch** | v1.11, map `ESP32-C6_SJALAY_CONTROLLER/` met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
 | **Klaar om te uploaden** | `bin/ESP32-C6_SJALAY_CONTROLLER_v1.11.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Alleen de laatste versie |
-| **Apps Script** | v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
+| **Apps Script** | v1.3 in de repo (24/11, eindschema 63 kolommen A–BK, voor Sjalay én Ysermonde; nog te implementeren), v1.2 draait (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
 
@@ -265,6 +265,24 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `C` | DHT22: totaal fouten sinds boot | DHT fouten |
 | `D` | Mislukte Google-POSTs sinds boot (telt nu elke POST, zie sketch-todo) | POST fouten |
 | `E` / `F` / `G` | DS18B20 kelder / ketelpomp / retour (`null` = niet toegewezen of defect) | Kelder / Ketelpomp / Retour (°C) |
+| **Vanaf Apps Script v1.3 (24/11): volledig eindschema, de sketch vult ze vanaf de versie tussen haakjes; ontbrekende key = lege cel** | | |
+| `H` | CO2 (ppm), `null` zonder sensor (v1.15) | AI CO2 (ppm) |
+| `I` | Bron vocht/dauwpunt: 0 = DHT22, 1 = SCD41, 2 = laatste geldige (v1.16) | AJ Vocht-bron |
+| `J` / `K` | Functie aanwezig: verwarming / SWW-boiler (0/1) (v1.12) | AK Verwarming / AL SWW-boiler |
+| `pa` | HomeWizard P1: status 0 = OK, 1 = geen antwoord, 2 = niet ingesteld, 3 = ongeldige data (v1.13) | AM P1 status |
+| `pb` / `pc` / `pd` / `pe` | Vermogen totaal / L1 / L2 / L3 (W, negatief = injectie; L2/L3 `null` bij 1 fase) | AN Vermogen / AO–AQ L1–L3 (W) |
+| `pf` / `pg` | Meterstand afname dag (T1) / nacht (T2) (kWh) | AR / AS |
+| `ph` / `pi` | Meterstand injectie dag / nacht (kWh) | AT / AU |
+| `pj` | Actief tarief (België: 1 = dag, 2 = nacht; te bevestigen met de Fluvius-site) | AV Tarief |
+| `pk` / `pl` | Kwartiervermogen (gemiddelde, W) / maandpiek (W), voor het capaciteitstarief | AW Kwartier / AX Maandpiek |
+| `pm` / `pn` / `po` | Spanning L1 / L2 / L3 (V) | AY–BA |
+| `pp` / `pq` / `pr` | Stroom L1 / L2 / L3 (A) | BB–BD |
+| `ps` / `pt` | Gasmeterstand (m³) / tijdstip van die gasmeting (`yymmddhhmmss` van de meter; Sheet toont `jjjj-mm-dd uu:mm:ss`) | BE Gas / BF Gas tijd |
+| `pu` | Aantal lange stroomonderbrekingen (meter) | BG Stroomuitval |
+| `pv` | Wi-Fi-sterkte van de dongle (%) | BH Dongle Wi-Fi |
+| `wa` / `wb` / `wc` | Watermeter: status (0 OK, 1 geen antwoord, 2 niet ingesteld) / meterstand (m³) / debiet (l/min) (later) | BI–BK |
+
+**Apps Script v1.3 (24/11):** volledig eindschema (A–BK, tabel `COLUMNS` in het script: kop, key, notatie, breedte; nieuwe kolommen enkel achteraan). Zelfde script voor beide huizen, elk een eigen Sheet en implementatie. Alarmmails met de room-naam; boileralarm enkel als `K` ≠ 0. Tests: `test()` (Sjalay-rij), `testYsermonde()` (P1-rij). Uitrollen: plakken, opslaan, Nieuwe versie implementeren, `setupHeaders()` eenmalig.
 
 **Apps Script (`SJALAY_SHEETS_LOGGER.gs`)**, afgeleid van het Zarlar-roomscript (v1.5): v1.2 (2/11) = v1.1 + vorstalarm per mail (zie hieronder). v1.1 logt kolommen A–AH (Tijdstempel + velden hierboven, met `y` als Set en zonder `c`; ontbrekende waarden als lege cel; temperaturen met 1 decimaal en kolom A met notatie `yyyy-mm-dd hh:mm:ss` via kolomnotatie), `MAX_ROWS = 50000` (oudste rij verdwijnt bij overschrijding).
 - **Sheet:** `*R-SJALAY_Log`, tabblad "Data" (rij 1 titel, rij 2 koppen, data vanaf rij 3)

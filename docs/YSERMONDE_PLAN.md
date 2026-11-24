@@ -42,9 +42,8 @@ Met port forwarding staat de controller rechtstreeks op het internet (gewone HTT
 - De controller leest `http://<ip>/api/v1/data` (JSON) elke 10–30 s, via het lokale netwerk.
 - Velden: `active_power_w`, `total_power_import_t1_kwh`, `total_power_import_t2_kwh`, `total_power_export_t1_kwh`, `total_power_export_t2_kwh`, `total_gas_m3`, `gas_timestamp`.
 - Tonen op `/advanced` (en compact op de landingspagina), in `/json` en in de Sheet.
-- **Voorstel `/json`-keys** (bestaande keys `a`–`z`, `A`–`G`; `H`, `I` blijven voor de SCD41) — **nog goed te keuren**:
-  - `J` vermogen (W, negatief = injectie) · `K` afname dag/T1 (kWh) · `L` afname nacht/T2 (kWh) · `M` injectie T1 (kWh) · `N` injectie T2 (kWh) · `O` gas (m³) · `P` P1-status (0 = OK, 1 = geen antwoord, 2 = geen dongle ingesteld)
-- **Sheet:** zelfde Apps Script voor beide huizen (logger v1.3), elk huis een **eigen Google Sheet**. Nieuwe kolommen achteraan (na AI/AJ van de SCD41). Verbruik per interval of per dag berekent de Sheet uit de meterstanden.
+- **`/json`-keys en Sheet-kolommen: VAST sinds 24/11** (Apps Script v1.3, eindschema A–BK). Volledige tabel in README §B6. P1: `pa` status, `pb`–`pe` vermogen totaal/L1–L3, `pf`/`pg` afname dag/nacht, `ph`/`pi` injectie dag/nacht, `pj` tarief, `pk` kwartiervermogen, `pl` maandpiek, `pm`–`po` spanning, `pp`–`pr` stroom, `ps` gas m³, `pt` gastijd, `pu` lange stroomonderbrekingen, `pv` Wi-Fi dongle. Verder `H`/`I` (SCD41), `J`/`K` (functies), `wa`–`wc` (watermeter).
+- **Sheet:** zelfde Apps Script voor beide huizen (logger v1.3, al klaar in de repo), elk huis een **eigen Google Sheet**. Verbruik per interval of per dag berekent de Sheet (extra tabblad) uit de meterstanden.
 
 ## 5. Volgorde van de versies
 
@@ -53,7 +52,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 | Versie | Inhoud | Test |
 |---|---|---|
 | **v1.12** | **Functies in `/settings`:** "Verwarming aanwezig" ja/nee en "SWW-boiler aanwezig" ja/nee. Uit = relais blijven uit, bijhorende sensoren/meldingen/UI-blokken verdwijnen, geen vorstalarm voor wat er niet is. Sjalay: alles aan, gedrag ongewijzigd. | Sjalay: alles werkt zoals v1.11 |
-| **v1.13** | **HomeWizard P1** (sectie 4) + **logger v1.3** (P1-kolommen). Ysermonde-controller in dienst: verwarming uit, SWW uit, P1-IP ingevuld, eigen Sheet. | Sjalay: geen verschil (geen dongle). Ysermonde: meterstanden en vermogen in de Sheet |
+| **v1.13** | **HomeWizard P1** (sectie 4); logger v1.3 is al klaar (24/11). Ysermonde-controller in dienst: verwarming uit, SWW uit, P1-IP ingevuld, eigen Sheet. | Sjalay: geen verschil (geen dongle). Ysermonde: meterstanden en vermogen in de Sheet |
 | **v1.14** | **Login en beveiliging** (sectie 3). Pas nodig als de router de controller naar buiten brengt. | Ysermonde: login van buitenaf, landingspagina open op Wi-Fi |
 | **v1.15** | SCD41: CO2 + key `H` + Sheet-kolommen AI/AJ (was v1.12) | met sensor |
 | **v1.16** | SCD41 als reserve voor vocht/dauwpunt + key `I` (was v1.13) | met sensor |
