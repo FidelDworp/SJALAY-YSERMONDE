@@ -275,7 +275,7 @@ Compact schema (enkel `room` voluit); één schema voedt de live-UI en de Sheets
 | `pb` / `pc` / `pd` / `pe` | Vermogen totaal / L1 / L2 / L3 (W, negatief = injectie; L2/L3 `null` bij 1 fase) | Vermogen / L1–L3 (W) |
 | `pf` / `pg` | Meterstand afname dag (T1) / nacht (T2) (kWh) | Afname dag / nacht (kWh) |
 | `ph` / `pi` | Meterstand injectie dag / nacht (kWh) | Injectie dag / nacht (kWh) |
-| `pj` | Actief tarief (België: 1 = dag, 2 = nacht; te bevestigen met de Fluvius-site) | Tarief |
+| `pj` | Actief tarief (België: 1 = dag (1.8.1), 2 = nacht (1.8.2); bevestigd op de XT211 in Ysermonde) | Tarief |
 | `pk` / `pl` | Kwartiervermogen (gemiddelde, W) / maandpiek (W), voor het capaciteitstarief | Kwartier / Maandpiek (W) |
 | `pm` / `pn` / `po` | Spanning L1 / L2 / L3 (V) | U L1–L3 (V) |
 | `pp` / `pq` / `pr` | Stroom L1 / L2 / L3 (A) | I L1–L3 (A) |

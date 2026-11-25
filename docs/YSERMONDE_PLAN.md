@@ -37,6 +37,13 @@ Met port forwarding staat de controller rechtstreeks op het internet (gewone HTT
 
 ## 4. HomeWizard P1-meter (v1.14)
 
+**Meters in Ysermonde (foto's Filip, 25/11):**
+- Elektriciteit: **Sagemcom Siconia XT211**, **driefasig**, Fluvius, met LTE. P1-poort achter het lichtgroene klepje linksonder op de meter (gebruikerspoort). Volgens de meter zelf: **1.8.1 = dag (zon), 1.8.2 = nacht (maan)**, idem 2.8.1/2.8.2 voor injectie → tarief 1 = dag, 2 = nacht is bevestigd.
+- Gas: **Apator Metrix UG G4 iSMART2** met **draadloze M-Bus** → stuurt zijn stand naar de elektriciteitsmeter, dus zit in het P1-telegram.
+- Water: aparte meter onderaan in de kast, niet via P1 (later).
+- Dongle: **HomeWizard Wi-Fi P1 Meter (HWE-P1)**; driefasig → `pc`/`pd`/`pe`, `pm`–`po` en `pp`–`pr` worden allemaal gevuld.
+- Meterkast = keukenkast naast de oven: Wi-Fi-bereik en of het deurtje dicht kan met de dongle erin, ter plaatse nakijken.
+
 - Eén dongle op de P1-poort leest elektriciteit **en** gas (de gasmeter stuurt via de digitale meter). P1-poort is open bij Fluvius (in orde volgens Filip).
 - In de HomeWizard Energy-app **"Lokale API" inschakelen**; de dongle best een vast IP geven (DHCP-reservatie in de router).
 - De controller leest `http://<ip>/api/v1/data` (JSON) elke 10–30 s, via het lokale netwerk.
