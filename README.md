@@ -8,7 +8,7 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
 | **Sketch** | v1.13, map `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/` (sinds 25/11; één sketch voor Sjalay en Ysermonde) met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
 | **Klaar om te uploaden** | `bin/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER_v1.13.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). Normaal alleen de laatste versie; `ESP32-C6_SJALAY_CONTROLLER_v1.12.ino.bin` blijft als terugvaloptie tot v1.13 getest is |
-| **Apps Script** | v1.3 in de repo (24/11, eindschema 63 kolommen A–BK, één Sheet voor Sjalay én Ysermonde met huisfilter in C1; nog te implementeren), v1.2 draait (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
+| **Apps Script** | **v1.3a draait** (25/11; eindschema 63 kolommen A–BK, één Sheet voor Sjalay én Ysermonde met huisfilter in C1; oude data in tabblad "Archief v1.2"), voorheen v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
 
