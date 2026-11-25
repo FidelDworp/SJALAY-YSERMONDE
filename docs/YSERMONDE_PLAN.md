@@ -79,7 +79,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 **In Ysermonde:**
 6. Dongle in de gebruikerspoort (lichtgroen klepje), koppelen via de HomeWizard Energy-app (2,4 GHz), **lokale API aan**.
 7. Telenet-router: vast IP (DHCP-reservatie) voor de dongle **en** voor de controller.
-8. Controling: in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude.
+8. Controle: in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude.
 9. `/settings` van de controller: **HomeWizard P1 IP** invullen → opslaan.
 10. Nakijken: `/advanced` → blok "Energie (P1-meter)" Status **OK**, vermogen en gas; landingspagina: energiekaart; na ±5 min een rij "Ysermonde" in de Sheet (keuzelijst C1).
 11. Port forwarding pas na v1.15 (login).
