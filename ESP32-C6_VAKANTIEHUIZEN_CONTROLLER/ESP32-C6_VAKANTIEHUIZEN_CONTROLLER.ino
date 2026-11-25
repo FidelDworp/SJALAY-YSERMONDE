@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.12 — 25 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.13 — 25 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -187,6 +187,17 @@
 //                /json: nieuwe keys J = verwarming aanwezig (0/1), K = SWW-boiler aanwezig (0/1)
 //                (eindschema Apps Script v1.3). Geen andere keys gewijzigd.
 // ----------------------------------------------------------------------------
+// v1.13 (25nov26): OTA ZICHTBAAR + VERSIE PROMINENT (vraag Filip na de OTA van v1.12, die "leek te hangen").
+//                (1) Map en .ino heten nu ESP32-C6_VAKANTIEHUIZEN_CONTROLLER (Arduino: map = .ino-naam);
+//                    #define SJALAY_VERSION -> VH_VERSION; .bin-bestanden voortaan ..._VAKANTIEHUIZEN_CONTROLLER_vX.
+//                (2) Versie in de kop van ELKE pagina, zoals de ROOM-sketch: "<room> · Vakantiehuis v1.13".
+//                (3) /update: upload via de browser MET VOORTGANGSBALK (%, KB), daarna "Controller herstart..."
+//                    met teller; de pagina vraagt elke 2 s /ver op tot de controller terug is (nieuwe uptime),
+//                    toont "Terug online: firmware vX (na N s)" en gaat naar /advanced. Draait na 30 s nog de
+//                    oude firmware zonder herstart -> "update niet gelukt". Na 3 min zonder antwoord -> melding.
+//                    De upload blijft ook gewoon met curl werken (zelfde POST, zelfde antwoord).
+//                (4) Nieuw: GET /ver -> tekst "versie|uptime_s" (klein, voor de OTA-pagina; /json ongewijzigd).
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -229,7 +240,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define SJALAY_VERSION "1.12"
+#define VH_VERSION "1.13"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -514,6 +525,7 @@ void writeHeader(AsyncResponseStream *p) {
   unsigned long upt = (millis() - boot_millis) / 1000;
   p->print("<div class=\"header\"><div class=\"header-left\">");
   p->print(room_id);
+  p->print("<span style=\"font-size:12px;font-weight:normal;opacity:.75\"> &middot; Vakantiehuis v" VH_VERSION "</span>");   // v1.13
   p->print("</div><div class=\"header-right\" id=\"hdr-clock\">");
   p->printf("uptime %luu %02lum", upt/3600, (upt%3600)/60);
   p->print(" <span id=\"status\"></span></div></div>");
@@ -1724,7 +1736,7 @@ void handleStatus(AsyncWebServerRequest *request) {
   }
   p->printf("<tr><td class=\"label\">DS18B20 mislukte lezingen</td><td class=\"value\" colspan=\"2\">%u (sinds boot)</td></tr>", (unsigned)ds_fail_total);
   p->printf("<tr><td class=\"label\">Google-POST fouten</td><td class=\"value\" colspan=\"2\">%u (laatste duur %lu ms)</td></tr>", (unsigned)sheets_fail_total, sheets_last_ms);
-  p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", SJALAY_VERSION);
+  p->printf("<tr><td class=\"label\">Firmware</td><td class=\"value\" colspan=\"2\">v%s</td></tr>", VH_VERSION);
   p->print("</table>");
 
   // ============== LIVE-REFRESH SCRIPT (loopt in browser, geen ESP32-heap-impact) ==============
@@ -2212,12 +2224,51 @@ void handleOtaPage(AsyncWebServerRequest *request) {
   p->print("<div class=\"container\">");
   writeSidebar(p, "ota");
   p->print("<div class=\"main\">");
-  p->print("<div class=\"group-title\">Firmware update (.bin)</div>"
-    "<form method=\"POST\" action=\"/update\" enctype=\"multipart/form-data\">"
-    "<input type=\"file\" name=\"update\" accept=\".bin\"><br><br>"
-    "<button type=\"submit\">Upload &amp; flash</button>"
-    "</form>"
-    "<p style=\"font-size:13px;color:#555;\">Herstart automatisch na succesvolle upload.</p>");
+  // v1.13: upload met voortgangsbalk en automatisch "terug online" (zie changelog)
+  p->printf("<div class=\"group-title\">Firmware update (.bin)</div>"
+    "<p style=\"font-size:13px;color:#555;\">Nu actief: <b>v%s</b> &middot; uptime %lu s</p>"
+    "<input type=\"file\" id=\"otaf\" accept=\".bin\"><br><br>"
+    "<button type=\"button\" id=\"otab\" onclick=\"otaUp()\">Upload &amp; flash</button>"
+    "<div style=\"max-width:420px;height:18px;background:#eee;border-radius:9px;margin:14px 0 6px 0;overflow:hidden;\">"
+    "<div id=\"otafill\" style=\"height:100%%;width:0;background:#369;\"></div></div>"
+    "<p id=\"otamsg\" style=\"font-size:14px;\">Kies een .bin-bestand. Na een geslaagde upload herstart de controller vanzelf; "
+    "deze pagina meldt wanneer hij terug is.</p>",
+    VH_VERSION, (millis() - boot_millis) / 1000UL);
+  p->print(R"JS(<script>
+var OLDV=")JS" VH_VERSION R"JS(";
+function m(t){document.getElementById('otamsg').innerHTML=t;}
+function otaUp(){
+  var f=document.getElementById('otaf').files[0];
+  if(!f){m('Kies eerst een .bin-bestand.');return;}
+  document.getElementById('otab').disabled=true;
+  var fd=new FormData();fd.append('update',f,f.name);
+  var x=new XMLHttpRequest();
+  x.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded*100/e.total);
+    document.getElementById('otafill').style.width=p+'%';
+    m('Uploaden: <b>'+p+'%</b> ('+Math.round(e.loaded/1024)+' van '+Math.round(e.total/1024)+' KB)');}};
+  x.onload=function(){
+    if(x.status==200&&x.responseText.indexOf('Update OK')>=0){m('Upload geslaagd. Controller herstart...');wacht(true);}
+    else{document.getElementById('otab').disabled=false;m(x.responseText.replace(/<a[^>]*>.*?<\/a>/g,''));}};
+  x.onerror=function(){m('Verbinding verbroken tijdens of na de upload. Even nagaan of de controller herstart...');wacht(false);};
+  x.open('POST','/update');x.send(fd);
+}
+function wacht(ok){
+  var t0=Date.now();
+  var iv=setInterval(function(){
+    var s=Math.round((Date.now()-t0)/1000);
+    if(s>180){clearInterval(iv);m('Na 3 minuten nog geen antwoord. Over 4G kan het langer duren: probeer straks <a href="/advanced">/advanced</a>.');return;}
+    fetch('/ver?'+Date.now(),{cache:'no-store'}).then(function(r){return r.text();}).then(function(t){
+      var p=t.split('|'),v=p[0],up=+p[1];
+      if(up<s+15){clearInterval(iv);document.getElementById('otafill').style.width='100%';
+        m('&#9989; <b>Terug online</b>: firmware v'+v+' (na '+s+' s)'+(v===OLDV?' &mdash; let op: zelfde versie als voordien':'')+'. Even geduld, naar Status...');
+        setTimeout(function(){location.href='/advanced';},3000);}
+      else if(s>30){clearInterval(iv);document.getElementById('otab').disabled=false;
+        m('&#10060; Controller herstartte niet en draait nog v'+v+': de update is niet gelukt. Probeer opnieuw.');}
+      else m('Controller herstart... '+s+' s');
+    }).catch(function(){m('Controller herstart... '+s+' s (nog geen antwoord)');});
+  },2000);
+}
+</script>)JS");
   p->print("</div></div></body></html>");
   request->send(p);
 }
@@ -2432,6 +2483,10 @@ void setup() {
     ESP.restart();
   });
   server.on("/update", HTTP_GET, handleOtaPage);
+  server.on("/ver", HTTP_GET, [](AsyncWebServerRequest *request) {   // v1.13: "versie|uptime_s" voor de OTA-pagina
+    char b[32]; snprintf(b, sizeof(b), "%s|%lu", VH_VERSION, (millis() - boot_millis) / 1000UL);
+    request->send(200, "text/plain", b);
+  });
   server.on("/update", HTTP_POST,
     [](AsyncWebServerRequest *request) {
       // v1.10: enkel OK als de update echt afgerond is; anders de reden tonen
