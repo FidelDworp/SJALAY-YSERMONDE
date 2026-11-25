@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.13 — 25 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.14 — 26 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -198,6 +198,24 @@
 //                    De upload blijft ook gewoon met curl werken (zelfde POST, zelfde antwoord).
 //                (4) Nieuw: GET /ver -> tekst "versie|uptime_s" (klein, voor de OTA-pagina; /json ongewijzigd).
 // ----------------------------------------------------------------------------
+// v1.14 (26nov26): HOMEWIZARD P1-METER (Ysermonde; docs/YSERMONDE_PLAN.md sectie 4). Geschreven op basis van
+//                de HomeWizard-documentatie, VOOR de dongle er is: na de eerste echte gegevens nakijken.
+//                - /settings: "HomeWizard P1 IP" (NVS "p1_ip", leeg = geen P1). Liefst vast IP in de router.
+//                - loop(): elke 10 s HTTP GET http://<ip>/api/v1/data (lokale API, inschakelen in de
+//                  HomeWizard Energy-app), max ±3,5 s wachten. Platte JSON, eigen kleine lezer (geen bibliotheek).
+//                  Gas: total_gas_m3 + gas_timestamp; ontbreken die (nieuwere firmware), dan het "gas_meter"-
+//                  item in "external" (value + timestamp).
+//                - Waarden gelden 60 s na de laatste geslaagde lezing; daarna null in /json (lege cel in de Sheet).
+//                - /json (eindschema Apps Script v1.3): pa status (0 OK, 1 geen antwoord, 2 niet ingesteld,
+//                  3 ongeldige data), pb vermogen W (negatief = injectie), pc/pd/pe L1/L2/L3 W, pf/pg afname
+//                  dag/nacht kWh, ph/pi injectie dag/nacht kWh, pj tarief (1 = dag, 2 = nacht), pk kwartier-
+//                  vermogen W, pl maandpiek W, pm-po spanning V, pp-pr stroom A, ps gas m³, pt gastijd
+//                  ("yymmddhhmmss"), pu lange stroomonderbrekingen, pv Wi-Fi dongle %. wa = 2 (watermeter nog
+//                  niet ingesteld).
+//                - /advanced: blok "Energie (P1-meter)" met live-update; landingspagina: kaart met vermogen en gas.
+//                  Beide enkel zichtbaar als een P1-IP is ingevuld (Sjalay: geen verschil).
+//                - Diagnose-stap "P1" in de herstart-breadcrumb.
+// ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
 #define Serial Serial0
@@ -240,7 +258,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.13"
+#define VH_VERSION "1.14"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -319,9 +337,9 @@ bool dew_enabled = true;
 
 // v1.5 broodkruimel: laatste fase in RTC-geheugen (overleeft software-/watchdogherstart, niet power-on)
 enum Stage : uint8_t { STG_IDLE = 0, STG_WIFI, STG_PIR, STG_PIX, STG_SHELLY, STG_DHT, STG_DS,
-                       STG_HEAT, STG_SWW, STG_POST, STG_CRASH, STG_OTA, STG_SET, STG_DHTPW, STG_COUNT };
+                       STG_HEAT, STG_SWW, STG_POST, STG_CRASH, STG_OTA, STG_SET, STG_DHTPW, STG_P1, STG_COUNT };
 const char* const STAGE_NAMES[STG_COUNT] = { "IDLE", "WIFI", "PIR", "PIX", "SHELLY", "DHT", "DS",
-                                             "HEAT", "SWW", "POST", "CRASH", "OTA", "SET", "DHTPW" };
+                                             "HEAT", "SWW", "POST", "CRASH", "OTA", "SET", "DHTPW", "P1" };
 #define RTC_MAGIC 0xA55A1507UL
 RTC_NOINIT_ATTR uint32_t rtc_magic;
 RTC_NOINIT_ATTR uint8_t rtc_stage;
@@ -390,6 +408,25 @@ unsigned long duty_last_tick = 0;
 
 // ============== GOOGLE SHEETS LOGGING ==============
 char gas_url[200] = "";           // Apps Script webhook-URL; leeg = uitgeschakeld
+
+// v1.14: HomeWizard P1-meter (lokale API)
+char p1_ip[40] = "";              // IP of naam van de dongle; leeg = geen P1
+#define P1_POLL_MS   10000UL      // elke 10 s uitlezen
+#define P1_STALE_MS  60000UL      // waarden ouder dan 60 s -> null
+struct P1Data {
+  float w, w1, w2, w3;            // vermogen totaal / L1 / L2 / L3 (W)
+  float it1, it2, et1, et2;       // meterstanden afname / injectie, dag (T1) / nacht (T2) (kWh)
+  float avg, peak;                // kwartiervermogen, maandpiek (W)
+  float u1, u2, u3, i1, i2, i3;   // spanning (V), stroom (A)
+  float gas;                      // m³
+  float tariff, pfail, wifi;      // tarief 1/2, lange stroomonderbrekingen, Wi-Fi dongle (%)
+  char gas_ts[16];                // "yymmddhhmmss" van de gasmeter
+};
+P1Data p1;
+uint8_t p1_status = 2;            // 0 OK, 1 geen antwoord, 2 niet ingesteld, 3 ongeldige data
+unsigned long p1_last_ok = 0, p1_last_try = 0;
+int p1_last_code = 0;
+uint32_t p1_fail_total = 0, p1_ok_total = 0;
 int sheets_last_code = 0;         // laatste HTTP-resultaatcode (0 = nog niet geprobeerd)
 unsigned long sheets_last_post = 0;  // millis() van laatste poging
 int sheets_interval_min = 5;      // instelbaar in Settings (1-60 min), default 5 — PIR-telvenster volgt deze waarde
@@ -1228,6 +1265,123 @@ uint32_t getCrashCount() {
 // Auto/Handmatig-togglestatus en hysterese (enkel wijzigbaar via Settings, wat toch al
 // een herstart+redirect veroorzaakt), en per-sensor-detail van niet-toegewezen
 // DS18B20's. Die informatie blijft wel zichtbaar bij het laden van de pagina zelf.
+// ============== v1.14: HOMEWIZARD P1-METER ==============
+// Getal na "key": in platte JSON; NAN als de key ontbreekt of null is. 'from'/'to' beperken het zoekgebied.
+static float jsonNum(const String &s, const char *key, int from = 0, int to = -1) {
+  String k = String("\"") + key + "\":";
+  int i = s.indexOf(k, from);
+  if (i < 0 || (to >= 0 && i > to)) return NAN;
+  i += k.length();
+  while (i < (int)s.length() && s[i] == ' ') i++;
+  if (i >= (int)s.length()) return NAN;
+  char c = s[i];
+  if (c == '"') i++;                                  // getal als tekst ("123")
+  c = s[i];
+  if (!(c == '-' || (c >= '0' && c <= '9'))) return NAN;
+  return strtof(s.c_str() + i, nullptr);
+}
+// Ruwe getal-tekst (bv. tijdstempel 261124230500) na "key": -> buf; leeg als niet gevonden.
+static void jsonDigits(const String &s, const char *key, char *buf, size_t n, int from = 0, int to = -1) {
+  buf[0] = '\0';
+  String k = String("\"") + key + "\":";
+  int i = s.indexOf(k, from);
+  if (i < 0 || (to >= 0 && i > to)) return;
+  i += k.length();
+  while (i < (int)s.length() && (s[i] == ' ' || s[i] == '"')) i++;
+  size_t j = 0;
+  while (i < (int)s.length() && j + 1 < n && s[i] >= '0' && s[i] <= '9') buf[j++] = s[i++];
+  buf[j] = '\0';
+}
+
+void pollP1() {
+  if (p1_ip[0] == '\0') { p1_status = 2; return; }
+  if (ap_mode_active || WiFi.status() != WL_CONNECTED) return;
+  if (p1_last_try != 0 && millis() - p1_last_try < P1_POLL_MS) return;
+  p1_last_try = millis();
+  setStage(STG_P1);
+
+  WiFiClient client;
+  HTTPClient http;
+  http.setConnectTimeout(1500);
+  http.setTimeout(2000);
+  String url = String("http://") + p1_ip + "/api/v1/data";
+  if (!http.begin(client, url)) { p1_status = 1; p1_last_code = -1; p1_fail_total++; return; }
+  p1_last_code = http.GET();
+  if (p1_last_code != 200) {
+    http.end();
+    p1_status = 1; p1_fail_total++;
+    return;
+  }
+  String b = http.getString();
+  http.end();
+
+  float w = jsonNum(b, "active_power_w");
+  if (isnan(w)) { p1_status = 3; p1_fail_total++; return; }   // geen P1-data in het antwoord
+  P1Data d;
+  d.w   = w;
+  d.w1  = jsonNum(b, "active_power_l1_w");
+  d.w2  = jsonNum(b, "active_power_l2_w");
+  d.w3  = jsonNum(b, "active_power_l3_w");
+  d.it1 = jsonNum(b, "total_power_import_t1_kwh");
+  d.it2 = jsonNum(b, "total_power_import_t2_kwh");
+  d.et1 = jsonNum(b, "total_power_export_t1_kwh");
+  d.et2 = jsonNum(b, "total_power_export_t2_kwh");
+  d.tariff = jsonNum(b, "active_tariff");
+  d.avg  = jsonNum(b, "active_power_average_w");
+  d.peak = jsonNum(b, "montly_power_peak_w");            // sic: zo gespeld in de HomeWizard-API
+  if (isnan(d.peak)) d.peak = jsonNum(b, "monthly_power_peak_w");
+  d.u1 = jsonNum(b, "active_voltage_l1_v");
+  d.u2 = jsonNum(b, "active_voltage_l2_v");
+  d.u3 = jsonNum(b, "active_voltage_l3_v");
+  d.i1 = jsonNum(b, "active_current_l1_a");
+  d.i2 = jsonNum(b, "active_current_l2_a");
+  d.i3 = jsonNum(b, "active_current_l3_a");
+  d.pfail = jsonNum(b, "long_power_fail_count");
+  d.wifi  = jsonNum(b, "wifi_strength");
+  d.gas   = jsonNum(b, "total_gas_m3");
+  jsonDigits(b, "gas_timestamp", d.gas_ts, sizeof(d.gas_ts));
+  if (isnan(d.gas)) {                                     // nieuwere firmware: "external":[{"type":"gas_meter",...}]
+    int t = b.indexOf("\"gas_meter\"");
+    if (t >= 0) {
+      int o = b.lastIndexOf('{', t), c = b.indexOf('}', t);
+      d.gas = jsonNum(b, "value", o, c);
+      jsonDigits(b, "timestamp", d.gas_ts, sizeof(d.gas_ts), o, c);
+    }
+  }
+  p1 = d;
+  p1_status = 0;
+  p1_last_ok = millis();
+  p1_ok_total++;
+}
+
+static bool p1Fresh() { return p1_status != 2 && p1_last_ok != 0 && millis() - p1_last_ok < P1_STALE_MS; }
+
+// ,"key":waarde  of  ,"key":null (geen of te oude waarde)
+static void jAdd(String &o, const char *key, float v, uint8_t dec) {
+  o += ",\""; o += key; o += "\":";
+  if (!p1Fresh() || isnan(v)) { o += "null"; return; }
+  char b[24]; snprintf(b, sizeof(b), "%.*f", dec, v); o += b;
+}
+
+String p1JsonPart() {
+  String o;
+  o.reserve(420);
+  uint8_t st = p1_status;
+  if (st == 0 && !p1Fresh()) st = 1;                      // te lang geen geslaagde lezing
+  o += ",\"pa\":"; o += st;
+  jAdd(o, "pb", p1.w, 0);   jAdd(o, "pc", p1.w1, 0); jAdd(o, "pd", p1.w2, 0); jAdd(o, "pe", p1.w3, 0);
+  jAdd(o, "pf", p1.it1, 3); jAdd(o, "pg", p1.it2, 3); jAdd(o, "ph", p1.et1, 3); jAdd(o, "pi", p1.et2, 3);
+  jAdd(o, "pj", p1.tariff, 0); jAdd(o, "pk", p1.avg, 0); jAdd(o, "pl", p1.peak, 0);
+  jAdd(o, "pm", p1.u1, 1);  jAdd(o, "pn", p1.u2, 1);  jAdd(o, "po", p1.u3, 1);
+  jAdd(o, "pp", p1.i1, 2);  jAdd(o, "pq", p1.i2, 2);  jAdd(o, "pr", p1.i3, 2);
+  jAdd(o, "ps", p1.gas, 3);
+  o += ",\"pt\":";
+  if (p1Fresh() && p1.gas_ts[0]) { o += "\""; o += p1.gas_ts; o += "\""; } else o += "null";
+  jAdd(o, "pu", p1.pfail, 0); jAdd(o, "pv", p1.wifi, 0);
+  o += ",\"wa\":2";                                     // watermeter: nog niet ingesteld
+  return o;
+}
+
 String getJSON() {
   unsigned long upt = (millis() - boot_millis) / 1000;
   // v1.4: ruwe DHT22-waarden e/f zijn "null" zolang de laatste lezing mislukte (geen 0 meer)
@@ -1263,7 +1417,12 @@ String getJSON() {
     reset_reason_txt, (unsigned)boot_count, (unsigned)dht_fail_streak, (unsigned)dht_fail_total, (unsigned)sheets_fail_total,
     E_s, F_s, G_s,        // v1.4: z reset-reden, A boots, B DHT-reeks, C DHT-fouten, D POST-fouten, E/F/G kelder/ketelpomp/retour
     feat_heat ? 1 : 0, feat_sww ? 1 : 0);   // v1.12: J/K functies aanwezig
-  return String(buf);
+  // v1.14: P1-blok (pa..pv) en watermeter (wa) achteraan toevoegen
+  String out(buf);
+  out.remove(out.length() - 1);   // afsluitende }
+  out += p1JsonPart();
+  out += "}";
+  return out;
 }
 
 // mDNS-hostnamen mogen enkel a-z/0-9/streepjes bevatten (RFC-conform, en wat ESPmDNS
@@ -1311,6 +1470,7 @@ void loadConfigFromNVS() {
   hyst_sww        = constrain(preferences.getFloat("hyst_sww", 5.0), 0.5f, 15.0f);
   feat_heat       = preferences.getBool("f_heat", true);   // v1.12
   feat_sww        = preferences.getBool("f_sww", true);    // v1.12
+  { String t = preferences.getString("p1_ip", ""); strlcpy(p1_ip, t.c_str(), sizeof(p1_ip)); }   // v1.14
 }
 
 void loadPixelConfigFromNVS() {
@@ -1466,6 +1626,13 @@ void handleLanding(AsyncWebServerRequest *request) {
     boiler_temp_reliable ? (String(temp_boiler, 1) + "&deg;").c_str() : "n.v.t.",
     boiler_setpoint, sww_min, boiler_setpoint);
 
+  // v1.14: energiekaart (enkel met P1-meter)
+  if (p1_ip[0]) {
+    p->print("<div class=\"card p1\"><div class=\"icring\" id=\"ic-p1\">&#9889;</div>"
+      "<div class=\"big\"><span id=\"v-p1w-l\">&hellip;</span></div>"
+      "<div style=\"font-size:13px;color:#666;\" id=\"v-p1g-l\"></div></div>");
+  }
+
   // ---- Geavanceerd (enkel icoon, geen tekst) ----
   p->print("<div class=\"gearwrap\"><a href=\"/advanced\">&#9881;&#65039;</a></div>");
 
@@ -1505,6 +1672,10 @@ void handleLanding(AsyncWebServerRequest *request) {
         "var hs=document.getElementById('sl-hsp');if(hs&&document.activeElement.id!=='sl-hsp')hs.value=data.c;"
         "var ih=document.getElementById('ic-heat');if(ih)ih.className='icring'+(data.b?' active':'');"
         "var vb=document.getElementById('v-bt');if(vb)vb.textContent=data.k.toFixed(1)+'°';"
+        // v1.14: energiekaart
+        "var pw=document.getElementById('v-p1w-l');if(pw)pw.textContent=(data.pb==null)?'n.v.t.':Math.round(data.pb)+' W';"
+        "var pg=document.getElementById('v-p1g-l');if(pg)pg.innerHTML=(data.ps==null)?'':'gas '+data.ps.toLocaleString('nl-BE',{minimumFractionDigits:3})+' m&sup3;';"
+        "var ip=document.getElementById('ic-p1');if(ip)ip.className='icring'+((data.pb!=null&&data.pb>0)?' active':'');"
         "var bt=document.getElementById('v-bsp-t');if(bt&&document.activeElement.id!=='sl-bsp')bt.textContent=' (→ '+data.j+'°)';"
         "var bs=document.getElementById('sl-bsp');if(bs&&document.activeElement.id!=='sl-bsp')bs.value=data.j;"
         "var is=document.getElementById('ic-sww');if(is)is.className='icring'+(data.i?' active':'');"
@@ -1694,6 +1865,24 @@ void handleStatus(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\" id=\"v-movlbl\">PIR MOV1 trig/%d min</td><td class=\"value\" id=\"v-mov\" colspan=\"2\">%d</td></tr>", sheets_interval_min, mov1_triggers);
   p->print("</table>");
 
+  // v1.14: Energie (P1-meter), enkel als een IP is ingevuld; waarden via live-update (pa..pv uit /json)
+  if (p1_ip[0]) {
+    p->printf("<div class=\"group-title\">Energie (P1-meter)</div><table>"
+      "<tr><td class=\"label\">Status<br><span style=\"font-size:11px;color:#888;\">HomeWizard %s &middot; %u OK / %u fouten</span></td><td class=\"value\" id=\"v-p1st\" colspan=\"2\">&hellip;</td></tr>",
+      p1_ip, (unsigned)p1_ok_total, (unsigned)p1_fail_total);
+    p->print("<tr><td class=\"label\">Vermogen nu<br><span style=\"font-size:11px;color:#888;\">negatief = injectie</span></td><td class=\"value\" id=\"v-p1w\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Per fase L1 / L2 / L3</td><td class=\"value\" id=\"v-p1ph\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Kwartiervermogen / maandpiek<br><span style=\"font-size:11px;color:#888;\">capaciteitstarief</span></td><td class=\"value\" id=\"v-p1cap\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Tarief</td><td class=\"value\" id=\"v-p1tar\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Afname dag / nacht</td><td class=\"value\" id=\"v-p1imp\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Injectie dag / nacht</td><td class=\"value\" id=\"v-p1exp\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Spanning L1 / L2 / L3</td><td class=\"value\" id=\"v-p1u\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Stroom L1 / L2 / L3</td><td class=\"value\" id=\"v-p1i\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Gas<br><span style=\"font-size:11px;color:#888;\">tijdstip van de laatste gasmeting</span></td><td class=\"value\" id=\"v-p1gas\" colspan=\"2\">&hellip;</td></tr>"
+      "<tr><td class=\"label\">Lange stroomonderbrekingen / Wi-Fi dongle</td><td class=\"value\" id=\"v-p1diag\" colspan=\"2\">&hellip;</td></tr>"
+      "</table>");
+  }
+
   p->print("<div class=\"group-title\">Logging</div><table>");
   { char gasTxt[32];
     if (strlen(gas_url) == 0) strlcpy(gasTxt, "UIT (geen URL ingesteld)", sizeof(gasTxt));
@@ -1761,6 +1950,21 @@ void handleStatus(AsyncWebServerRequest *request) {
         "lastHex='#'+toHex(data.o)+toHex(data.p)+toHex(data.q);"
         "var g=id=>document.getElementById(id);"
         "if(g('v-rssi'))g('v-rssi').textContent=data.u+' dBm';"
+        // v1.14: P1-meter
+        "var f=function(v,d,u){return (v==null)?'&ndash;':v.toLocaleString('nl-BE',{minimumFractionDigits:d,maximumFractionDigits:d})+(u?' '+u:'');};"
+        "if(g('v-p1st')){var st=['OK','geen antwoord','niet ingesteld','ongeldige data'][data.pa]||'?';"
+          "g('v-p1st').textContent=st;g('v-p1st').style.color=(data.pa===0)?'#2a9d2a':'#c00';}"
+        "if(g('v-p1w'))g('v-p1w').innerHTML=f(data.pb,0,'W');"
+        "if(g('v-p1ph'))g('v-p1ph').innerHTML=f(data.pc,0,'W')+' / '+f(data.pd,0,'W')+' / '+f(data.pe,0,'W');"
+        "if(g('v-p1cap'))g('v-p1cap').innerHTML=f(data.pk,0,'W')+' / '+f(data.pl,0,'W');"
+        "if(g('v-p1tar'))g('v-p1tar').innerHTML=(data.pj==null)?'&ndash;':(data.pj==1?'&#9728;&#65039; dag (1)':(data.pj==2?'&#127769; nacht (2)':data.pj));"
+        "if(g('v-p1imp'))g('v-p1imp').innerHTML=f(data.pf,3,'kWh')+' / '+f(data.pg,3,'kWh');"
+        "if(g('v-p1exp'))g('v-p1exp').innerHTML=f(data.ph,3,'kWh')+' / '+f(data.pi,3,'kWh');"
+        "if(g('v-p1u'))g('v-p1u').innerHTML=f(data.pm,1,'V')+' / '+f(data.pn,1,'V')+' / '+f(data.po,1,'V');"
+        "if(g('v-p1i'))g('v-p1i').innerHTML=f(data.pp,2,'A')+' / '+f(data.pq,2,'A')+' / '+f(data.pr,2,'A');"
+        "if(g('v-p1gas')){var ts=data.pt?(' &middot; '+data.pt.substr(4,2)+'/'+data.pt.substr(2,2)+' '+data.pt.substr(6,2)+':'+data.pt.substr(8,2)):'';"
+          "g('v-p1gas').innerHTML=f(data.ps,3,'m&sup3;')+ts;}"
+        "if(g('v-p1diag'))g('v-p1diag').innerHTML=f(data.pu,0,'')+' / '+f(data.pv,0,'%');"
         "if(g('v-heap'))g('v-heap').textContent=data.v+' KB';"
         "if(g('v-lb'))g('v-lb').textContent=data.w+' KB';"
         "if(g('v-t2'))g('v-t2').innerHTML=(data.e==null)?'n.v.t. (DHT22 uitgevallen)':data.e.toFixed(1)+' &deg;C';"
@@ -1852,6 +2056,8 @@ void handleSettings(AsyncWebServerRequest *request) {
   p->printf("<tr><td class=\"label\">Aantal pixels (1-30, herstart nodig)</td><td class=\"control\"><input type=\"number\" name=\"pnum\" min=\"1\" max=\"30\" value=\"%d\" style=\"width:60px;\"></td></tr>", pixels_num);
   p->printf("<tr><td class=\"label\">Google Script URL<br><span style=\"font-size:11px;color:#888;\">leeg = logging uit</span></td>"
     "<td class=\"control\"><input type=\"text\" name=\"gas\" value=\"%s\" maxlength=\"199\" style=\"width:95%%;\"></td></tr>", gas_url);
+  p->printf("<tr><td class=\"label\">HomeWizard P1 IP<br><span style=\"font-size:11px;color:#888;\">leeg = geen P1-meter; lokale API aan in de Energy-app, liefst vast IP</span></td>"
+    "<td class=\"control\"><input type=\"text\" name=\"p1ip\" value=\"%s\" maxlength=\"39\" placeholder=\"192.168.x.y\" style=\"width:160px;\"></td></tr>", p1_ip);   // v1.14
   p->printf("<tr><td class=\"label\">Sheets-interval<br><span style=\"font-size:11px;color:#888;\">ook PIR-telvenster (trig/X min)</span></td>"
     "<td class=\"control\"><input type=\"number\" name=\"sheetsint\" min=\"1\" max=\"60\" value=\"%d\" style=\"width:60px;\"> min</td></tr>", sheets_interval_min);
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\">%s</td></tr>", mac_address);
@@ -1984,6 +2190,13 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     String v = request->getParam("gas")->value();
     strlcpy(gas_url, v.c_str(), sizeof(gas_url));
     preferences.putString("gas_url", v);
+  }
+  if (request->hasParam("p1ip")) {   // v1.14
+    String v = request->getParam("p1ip")->value();
+    v.trim();
+    strlcpy(p1_ip, v.c_str(), sizeof(p1_ip));
+    preferences.putString("p1_ip", p1_ip);
+    p1_status = p1_ip[0] ? 1 : 2; p1_last_ok = 0; p1_last_try = 0;
   }
   if (request->hasParam("sheetsint")) {
     sheets_interval_min = constrain(request->getParam("sheetsint")->value().toInt(), 1, 60);
@@ -2613,6 +2826,8 @@ void loop() {
     setStage(STG_SWW);
     updateSWWLogic();
   }
+
+  pollP1();   // v1.14: HomeWizard P1, elke 10 s (doet niets zonder IP)
 
   // Google Sheets: elke 5 min (HTTPS POST blokkeert kort, ~0.5-2s — aanvaardbaar op deze cadans)
   if (!ap_mode_active && millis() - sheets_last_post > sheetsIntervalMs()) {
