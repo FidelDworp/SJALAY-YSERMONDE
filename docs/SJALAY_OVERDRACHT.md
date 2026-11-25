@@ -1,4 +1,4 @@
-# Overdracht — Sjalay- en Ysermonde-controller (SJALAY-YSERMONDE)
+# Overdracht — Sjalay- en Ysermonde-controller (repo VAKANTIEHUIZEN, vroeger SJALAY-YSERMONDE)
 
 *Stand 11 november 2026 — Filip Delannoy (FiDel), Zarlardinge (BE)*
 
