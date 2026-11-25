@@ -16,6 +16,9 @@
 //                 · 3 andere temperaturen (N-P) · 4 SWW (Q-T) · 5 elektriciteit en gas, HomeWizard
 //                 P1 (U-AP) · 6 water (AQ-AS) · 7 licht, pixels, beweging (AT-BB) · 8 controller en
 //                 diagnose (BC-BK). Nieuwe keys: H CO2, I vocht-bron, J/K functies, pa..pv P1, wa..wc water.
+//                 v1.3a (25nov26): archiveerEnNieuweKoppen() hief het vastzetten van rij 1-2 niet op
+//                 -> "niet mogelijk alle niet-vastgezette rijen te verwijderen". Opgelost; een tweede
+//                 poging maakt geen tweede (leeg) archief.
 //                 Overstap: archiveerEnNieuweKoppen() eenmalig (oude rijen naar tabblad "Archief v1.2",
 //                 "Data" leeg met de nieuwe koppen). Grafieken op andere tabbladen opnieuw instellen.
 //                 Ontbrekende keys (oudere sketch, functie niet aanwezig) -> lege cel.
@@ -45,7 +48,7 @@ const HEADER_ROWS = 2;      // Rij 1 = keuzelijst (C1) + titel (D1), Rij 2 = kol
 const SHEET_NAME  = "Data"; // naam van het tabblad met de logrijen
 const FILTER_CELL = "C1";   // keuzelijst huisfilter (boven de kolom "Kamer")
 const ROOM_COL    = 3;      // kolom C = Kamer (room-naam van de controller)
-const TITLE       = "SJALAY / YSERMONDE CONTROLLER DATA LOGGER v1.3";
+const TITLE       = "SJALAY / YSERMONDE CONTROLLER DATA LOGGER v1.3a";
 // ============================================================
 
 // null/undefined (ongeldige of ontbrekende meting) -> lege cel; anders de waarde (0 blijft 0)
@@ -429,19 +432,27 @@ function archiveerEnNieuweKoppen() {
   const sheet = getLogSheet_();
   if (sheet.getFilter()) sheet.getFilter().remove();
 
-  // 1. Kopie van het hele tabblad als archief (oude kolomindeling blijft leesbaar)
-  let naam = ARCHIVE_NAME;
-  if (ss.getSheetByName(naam)) naam += " " + Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd HH:mm");
-  const archief = sheet.copyTo(ss).setName(naam);
-  ss.setActiveSheet(archief);
-  ss.moveActiveSheet(ss.getNumSheets());
-  Logger.log("Archief gemaakt: " + naam + " (" + (sheet.getLastRow() - HEADER_ROWS) + " rijen)");
+  // 1. Kopie van het hele tabblad als archief (oude kolomindeling blijft leesbaar).
+  //    v1.3a: overslaan als "Data" al leeg is (bv. tweede poging na een fout): dan is het archief er al.
+  if (sheet.getLastRow() > HEADER_ROWS) {
+    let naam = ARCHIVE_NAME;
+    if (ss.getSheetByName(naam)) naam += " " + Utilities.formatDate(new Date(), "Europe/Brussels", "yyyy-MM-dd HH:mm");
+    const archief = sheet.copyTo(ss).setName(naam);
+    ss.setActiveSheet(archief);
+    ss.moveActiveSheet(ss.getNumSheets());
+    Logger.log("Archief gemaakt: " + naam + " (" + (sheet.getLastRow() - HEADER_ROWS) + " rijen)");
+  } else {
+    Logger.log("Data is al leeg: geen nieuw archief gemaakt.");
+  }
 
-  // 2. "Data" leegmaken (koppen en data), één lege rij laten staan; setupHeaders voegt rij 1 en 2 in
+  // 2. "Data" leegmaken (koppen en data), één lege rij laten staan; setupHeaders voegt rij 1 en 2 in.
+  //    v1.3a: eerst vastzetten opheffen, anders weigert Sheets de rijen te verwijderen.
+  sheet.setFrozenRows(0);
+  sheet.setFrozenColumns(0);
   sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clear().clearDataValidations();
   if (sheet.getMaxRows() > 1) sheet.deleteRows(2, sheet.getMaxRows() - 1);
 
-  // 3. Nieuwe koppen + keuzelijst
+  // 3. Nieuwe koppen + keuzelijst (setupHeaders zet rij 1-2 en kolom A opnieuw vast)
   PropertiesService.getDocumentProperties().deleteProperty("rooms");
   setupHeaders();
   ss.setActiveSheet(sheet);
