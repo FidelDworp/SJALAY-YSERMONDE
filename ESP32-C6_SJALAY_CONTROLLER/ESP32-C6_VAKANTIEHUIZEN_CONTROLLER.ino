@@ -1,6 +1,6 @@
 // ============================================================================
-// SJALAY CONTROLLER — v1.12 — 25 nov 2026
-// Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
+// VAKANTIEHUIZEN CONTROLLER — v1.12 — 25 nov 2026
+// In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
 //
