@@ -77,6 +77,6 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 
 ## 7. Open vragen
 
-- HomeWizard P1-meter: nog te kopen (24/11).
+- HomeWizard P1-meter (HWE-P1): **besteld 25/11**, plaatsen bij het volgende bezoek aan Ysermonde (als de gebruikerspoort vrij bereikbaar is; geen zegel breken).
 - Watermeter: type en uitleesmethode.
 - Externe poort voor port forwarding (bij v1.15).
