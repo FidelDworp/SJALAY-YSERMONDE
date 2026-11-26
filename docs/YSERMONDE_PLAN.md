@@ -103,7 +103,10 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 
 **In Ysermonde:**
 6. Dongle in de gebruikerspoort (lichtgroen klepje), koppelen via de HomeWizard Energy-app (2,4 GHz), **lokale API aan**.
-7. Telenet-router: vast IP (DHCP-reservatie) voor de dongle **en** voor de controller.
+7. Telenet-router: vast IP voor de dongle **en** voor de controller. Eerst nakijken (26/11):
+   - **Netwerk en DHCP-reeks:** in de router (`http://<gateway>`, login op de sticker) bij LAN/DHCP, of op een gsm in de Wi-Fi-details (IP-adres + router). De sketch gaat uit van een /24-netwerk met de router op **.1** (bv. 192.168.0.1 of 192.168.1.1).
+   - **Vast IP kiezen** in hetzelfde netwerk, **buiten de DHCP-reeks** (thuis: onder .100; .212 botste met een Apple Watch). Kan de DHCP-reeks niet aangepast worden en begint ze laag, dan een adres helemaal bovenaan buiten de reeks.
+   - DNS: sinds v1.14d router + 8.8.8.8 als reserve (thuis beantwoordde de router de DNS-vragen van het bord met vast IP niet).
 8. Controle: in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude.
 9. `/settings` van de controller: **HomeWizard P1 IP** invullen → opslaan.
 10. Nakijken: `/advanced` → blok "Energie (P1-meter)" Status **OK**, vermogen en gas; landingspagina: energiekaart; na ±5 min een rij "Ysermonde" in de Sheet (keuzelijst C1).
