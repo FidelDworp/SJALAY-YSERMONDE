@@ -113,6 +113,15 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 10. Nakijken: `/advanced` → blok "Energie (P1-meter)" Status **OK**, vermogen en gas; landingspagina: energiekaart; na ±5 min een rij "Ysermonde" in de Sheet (keuzelijst C1).
 11. Port forwarding pas na v1.15 (login). Instellen via **Mijn Telenet → Je thuisnetwerk → Modem → Geavanceerde instellingen** (expertinstellingen ontgrendelen): regel met lokaal IP `192.168.0.90`, externe poort (niet-standaard, bv. 8080; niet 25/53/135/137/139/161/162/445/1080) → interne poort 80, TCP. LAN-subnet van de modem: 192.168.0.1 (gezien 26/11). Het publieke IP-adres van het huisje hoort **niet** in deze (publieke) repo.
 
+## 6b. Lessen netwerk (26/11) — belangrijk voor Ysermonde
+
+1. **Vast IP altijd buiten de DHCP-reeks.** Thuis werd .212 ook aan een Apple Watch uitgedeeld → POST faalde. Huisregel Filip: vaste IP's **onder .100**. Telenet deelt in beide huizen hoge adressen uit (.2xx); de DHCP-reeks zelf is in Mijn Telenet niet zichtbaar.
+2. **DNS bij een vast IP:** met enkel de router als DNS faalde elke POST (HTTP -1 na 12 s), ook op .90 zonder conflict; met DHCP lukte alles. Sinds **v1.14d**: router + 8.8.8.8 als reserve, en regel "DNS" op `/advanced`. Daarmee werkt .90 (eerste rij 26/11 19:34).
+3. **Router Ysermonde (Mijn Telenet → Je thuisnetwerk → Modem → Geavanceerde instellingen):** LAN-subnet 192.168.0.1 (aanpasbaar), port forwarding instelbaar van op afstand, geen DHCP-reservatie of zichtbare DHCP-reeks. Verbonden (26/11): Proliphix .217, Telenet-toestel "Compal" .218.
+4. **Zelfde subnet als thuis = probleem met Tailscale.** Zarlardinge en Ysermonde zijn allebei 192.168.0.x. Thuis wordt 192.168.0.0/24 via Tailscale gerouteerd; op de Wi-Fi in Ysermonde is 192.168.0.x het eigen netwerk, dus de thuiscontrollers zijn daar niet bereikbaar (Filip moest Wi-Fi uitzetten en via mobiele data werken). De Sjalay heeft wel een eigen reeks (192.168.50.x).
+   **Voorstel (nog te beslissen):** het LAN-subnet van de Ysermonde-modem wijzigen naar een eigen reeks, bv. **192.168.30.x** (router 192.168.30.1). Dan: geen overlap meer, thuis bereikbaar via Tailscale vanop de Wi-Fi in Ysermonde, en later eventueel ook Ysermonde in Tailscale. Controller dan **192.168.30.90**, dongle **192.168.30.91**; de sketch gaat uit van router = .1 en werkt dus ongewijzigd. Best ter plaatse doen (de Proliphix en de tv-box krijgen een nieuw adres; heeft de Proliphix een vast IP ingesteld, dan moet dat mee aangepast worden).
+5. **Port forwarding pas na v1.15 (login)**, met een niet-standaard externe poort. Publiek IP, adres en klantnaam niet in deze publieke repo.
+
 ## 7. Open vragen
 
 - HomeWizard P1-meter (HWE-P1): **besteld 25/11**, plaatsen bij het volgende bezoek aan Ysermonde (als de gebruikerspoort vrij bereikbaar is; geen zegel breken).
