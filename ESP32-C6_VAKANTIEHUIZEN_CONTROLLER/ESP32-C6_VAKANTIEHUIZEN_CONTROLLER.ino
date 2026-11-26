@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.14b — 26 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.14c — 26 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -12,8 +12,8 @@
 //              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
 // Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md (README.md §B5 voor het overzicht).
-// Huidige versie v1.14b: stabiel setup-AP "Vakantiehuis-Setup" (enkel AP, de Wi-Fi-client zoekt
-// niet meer op de achtergrond); zonder bezoeker op het AP na 5 min herstart -> Wi-Fi opnieuw proberen.
+// Huidige versie v1.14c: geen SNTP meer (crashte, klok werd nergens gebruikt), geen warmtevraag bij de
+// opstart, relaispinnen eerst in rust, live AAN/UIT-tekst, room-naam in alle paginatitels.
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -61,7 +61,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.14b"
+#define VH_VERSION "1.14c"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -173,9 +173,9 @@ int mov1_triggers = 0;
 char temp_melding[48] = "";
 char room_source[40] = "";         // naam van de sensor die room_temp momenteel levert (DS-naam of "DHT22 (fallback)")
 char boiler_melding[48] = "";
-bool room_temp_reliable = true;    // false = kamer-DS én DHT22 beide defect -> verwarming geblokkeerd
+bool room_temp_reliable = false;   // v1.14c: pas true na de eerste geldige meting (anders bij de opstart 0 °C -> warmtevraag) // false = kamer-DS én DHT22 beide defect -> verwarming geblokkeerd
 bool room_temp_fallback = false;   // true = DS18B20 (kamer) uitgevallen, DHT22 neemt het over
-bool boiler_temp_reliable = true;  // false = geen bruikbare boilersensor -> SWW-pomp geblokkeerd
+bool boiler_temp_reliable = false; // v1.14c: idem // false = geen bruikbare boilersensor -> SWW-pomp geblokkeerd
 
 // v1.12: functies (Sjalay: beide aan; Ysermonde: geen SWW, verwarming naar keuze)
 bool feat_heat = true;            // verwarming aanwezig (relais 1)
@@ -1497,7 +1497,9 @@ void handleStatus(AsyncWebServerRequest *request) {
   AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
   p->print("<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-            "<title>Sjalay</title>");
+            "<title>");
+  p->print(room_id);   // v1.14c: room-naam i.p.v. vast "Sjalay"
+  p->print("</title>");
   writeSharedCSS(p);
   p->print("</head><body>");
   writeHeader(p);
@@ -1808,7 +1810,11 @@ void handleStatus(AsyncWebServerRequest *request) {
       "const p=new URLSearchParams();"
       "for(const el of form.elements){if(el.name)p.append(el.name,el.value);}"
       "const url=p.toString()?form.action+'?'+p.toString():form.action;"
-      "fetch(url).then(r=>{if(r.ok){updateValues();const s=document.getElementById('status');"
+      "fetch(url).then(r=>{if(r.ok){"
+        "const cb=form.querySelector('input[type=checkbox]');"   // v1.14c: AAN/UIT-tekst naast de schakelaar bijwerken
+        "if(cb&&['cb-hauto','cb-rman','cb-swauto','cb-sw2man'].indexOf(cb.id)>=0){"
+          "const v=document.getElementById('v-'+cb.id.slice(3));if(v)v.textContent=cb.checked?'AAN':'UIT';}"
+        "updateValues();const s=document.getElementById('status');"
         "if(s){s.textContent='\\u2713';setTimeout(()=>{if(s)s.textContent='';},1500);}}}).catch(e=>console.error(e));}"
     "document.addEventListener('DOMContentLoaded',function(){"
       "updateValues();setInterval(updateValues,3000);setInterval(updateClock,1000);});"
@@ -1823,7 +1829,8 @@ void handleSettings(AsyncWebServerRequest *request) {
   AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
   p->print("<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-            "<title>Sjalay - Settings</title>");
+            "<title>");
+  p->print(room_id); p->print(" - Settings</title>");   // v1.14c
   writeSharedCSS(p);
   p->print("</head><body>");
   writeHeader(p);
@@ -2235,7 +2242,8 @@ void handleOtaPage(AsyncWebServerRequest *request) {
   AsyncResponseStream *p = request->beginResponseStream("text/html; charset=utf-8");
   p->print("<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-            "<title>Sjalay - OTA</title>");
+            "<title>");
+  p->print(room_id); p->print(" - OTA</title>");   // v1.14c
   writeSharedCSS(p);
   p->print("</head><body>");
   writeHeader(p);
@@ -2299,6 +2307,11 @@ void setup() {
   while (Serial.available()) Serial.read();
 
   // === FAIL-SAFE: beide relais UIT vóór alles verder, incl. vóór Wi-Fi/NVS ===
+  // v1.14c: eerst het uitgangsniveau op "rust" zetten, pas daarna de pin als uitgang (geen korte puls)
+  const int RELAY_IDLE = RELAY_ACTIVE_LOW ? 1 : 0;
+  gpio_set_level((gpio_num_t)RELAY_PIN,  RELAY_IDLE);
+  gpio_set_level((gpio_num_t)RELAY2_PIN, RELAY_IDLE);
+  gpio_set_level((gpio_num_t)RELAY3_PIN, RELAY_IDLE);
   pinMode(RELAY_PIN, OUTPUT);
   setRelay(false);
   pinMode(RELAY2_PIN, OUTPUT);
@@ -2453,9 +2466,9 @@ void setup() {
     }
   }
 
-  setenv("TZ", "CET-1CEST,M3.5.0/02,M10.5.0/03", 1);
-  tzset();
-  configTzTime("CET-1CEST,M3.5.0/02,M10.5.0/03", "pool.ntp.org", "time.nist.gov");
+  // v1.14c: geen SNTP meer. De klok werd nergens gebruikt (tijdstempel Sheet = Google, klok op de pagina's =
+  // browser), en de NTP-opzoeking crashte thuis elke paar minuten: sntp_request -> dns_gethostbyname -> udp_new
+  // -> assert "Required to lock TCPIP core functionality" (26/11, Ysermonde-bord op het thuisnetwerk).
 
   DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
   DefaultHeaders::Instance().addHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");

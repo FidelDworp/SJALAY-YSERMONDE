@@ -5,6 +5,15 @@ Oudere geschiedenis (v0.1–v0.16): zie README.md. Nieuwe versies worden hier bo
 
 ## Na v1.14
 
+### v1.14c (26nov26) — SNTP-crash, opstart zonder warmtevraag
+- **Aanleiding:** het Ysermonde-bord (thuis, op het eigen netwerk) herstartte elke ±5 min met `PANIC@POST`; daardoor kwam er nooit een rij in de Sheet. Backtrace (vertaald met de .elf van de v1.14b-build): `sntp_request` → `dns_gethostbyname` → `dns_alloc_pcb` → `udp_new_ip_type` → assert "Required to lock TCPIP core functionality!". "@POST" was toeval: de loop was aan het posten toen de lwIP-taak crashte. Ook met Claude's build (Async TCP 4.0.0), dus niet de bibliotheekversie. De Sjalay (4G) had er geen last van.
+- **Oplossing:** `setenv("TZ")`, `tzset()` en `configTzTime(...)` verwijderd. De sketch gebruikte de klok nergens (geen `localtime`/`strftime`): de tijdstempel in de Sheet komt van Google, de klok op de pagina's van de browser.
+- `room_temp_reliable` en `boiler_temp_reliable` starten op `false`: pas betrouwbaar na de eerste geldige meting. Voorheen stond de kamertemperatuur bij de opstart op 0 °C en "betrouwbaar", zodat relais 1 in automatische modus enkele seconden AAN ging (`[RELAIS1] -> AAN` meteen na de opstart, ook in de Sjalay → korte warmtevraag aan de WOLF bij elke herstart).
+- Relaispinnen: eerst `gpio_set_level(..., rust)`, daarna `pinMode(OUTPUT)`.
+- `/advanced`: AAN/UIT-tekst naast "Automatische modus" en "Relais (handmatig)" (verwarming en SWW) wordt na het schakelen meteen bijgewerkt.
+- Titels van `/advanced`, `/settings` en `/update`: room-naam (was vast "Sjalay").
+- `/json`, Settings en Sheet ongewijzigd.
+
 ### v1.14b (26nov26) — stabiel setup-AP
 - Aanleiding: bij de eerste setup van de Ysermonde-controller (26/11) viel de verbinding met het AP weg tijdens het invullen van `/settings`.
 - Het AP heet nu **"Vakantiehuis-Setup"** (was "Sjalay-Setup"), naam in `#define AP_SSID`.
