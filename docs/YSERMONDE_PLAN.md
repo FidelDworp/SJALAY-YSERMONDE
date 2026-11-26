@@ -91,27 +91,30 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 | **v1.17** | SCD41 als reserve voor vocht/dauwpunt + key `I` (was v1.13, daarna v1.16) | met sensor |
 | later | Watermeter (Aquaduin, draadloos): uitleesmethode nog te bekijken | — |
 
-## 6. Ysermonde-controller in gebruik nemen (met v1.14b)
+## 6. Ysermonde-controller in gebruik nemen (met v1.14d)
 
-**Thuis voorbereiden (Mac, Arduino IDE):**
-1. Nieuwe ESP32-C6 (devkit volstaat voor de P1-logger; later het shield). Sketch `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER` openen.
-2. Board ESP32C6 Dev Module, Flash Size 16 MB, Partition Scheme **Custom** (`partitions.csv`), **USB CDC On Boot: Disabled**.
-3. Kabel in de USB-C-poort **"UART"**, uploaden. (Eerste flash moet met kabel: bootloader en partitietabel; daarna alles via OTA.)
-4. Controller start in AP-modus: verbinden met **"Vakantiehuis-Setup"** (open, sinds v1.14b; vóór v1.14b "Sjalay-Setup"). Mac: "Automatisch verbinden" voor het eigen Wi-Fi tijdelijk uit, anders springt de Mac terug (geen internet op het AP); het inlogvenster wegklikken maar verbonden blijven en in de browser `http://192.168.4.1/settings` openen. Zonder toestel op het AP herstart de controller na 5 min en probeert hij de Wi-Fi opnieuw. In het portaal Wi-Fi van het huisje invullen en room-naam **"Ysermonde"**.
-   (Kan thuis al met je eigen Wi-Fi om te testen; in Ysermonde het AP-portaal opnieuw, of Wi-Fi wijzigen via `/settings`.)
-5. `/settings`: Verwarming **Nee**, SWW-boiler **Nee**, Google Script-URL = **dezelfde** als de Sjalay, Sheets-interval 5 min.
+> **Beslist 26/11 (Claude, op vraag van Filip):** Ysermonde krijgt een **eigen netwerk 192.168.30.x** (router **192.168.30.1**), zodat het niet meer overlapt met thuis (192.168.0.x, via Tailscale) en de Sjalay (192.168.50.x). Controller **192.168.30.90**, HomeWizard-dongle **192.168.30.91**. Waarom: zie 6b.
 
-**In Ysermonde:**
-6. Dongle in de gebruikerspoort (lichtgroen klepje), koppelen via de HomeWizard Energy-app (2,4 GHz), **lokale API aan**.
-7. Telenet-router: vast IP voor de dongle **en** voor de controller. Eerst nakijken (26/11):
-   - **Netwerk en DHCP-reeks:** in de router (`http://<gateway>`, login op de sticker) bij LAN/DHCP, of op een gsm in de Wi-Fi-details (IP-adres + router). De sketch gaat uit van een /24-netwerk met de router op **.1** (bv. 192.168.0.1 of 192.168.1.1).
-   - **Vast IP kiezen** in hetzelfde netwerk, **buiten de DHCP-reeks** (thuis: onder .100; .212 botste met een Apple Watch). Kan de DHCP-reeks niet aangepast worden en begint ze laag, dan een adres helemaal bovenaan buiten de reeks.
-   - **Gezien in Mijn Telenet (26/11):** netwerk 192.168.0.x; verbonden: Proliphix-thermostaat **.217**, "Compal" (Telenet-toestel, vermoedelijk tv-box) **.218**, beide via DHCP; IPv6 staat ook aan (geen invloed, de sketch gebruikt IPv4). De DHCP-reeks is in Mijn Telenet niet zichtbaar (ook niet bij Geavanceerde instellingen). Telenet deelt in beide huizen hoge adressen uit (.2xx) → **controller .90, dongle .91** (huisregel: vaste IP's onder .100).
-   - DNS: sinds v1.14d router + 8.8.8.8 als reserve (thuis beantwoordde de router de DNS-vragen van het bord met vast IP niet).
-8. Controle: in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude.
-9. `/settings` van de controller: **HomeWizard P1 IP** invullen → opslaan.
-10. Nakijken: `/advanced` → blok "Energie (P1-meter)" Status **OK**, vermogen en gas; landingspagina: energiekaart; na ±5 min een rij "Ysermonde" in de Sheet (keuzelijst C1).
-11. Port forwarding pas na v1.15 (login). Instellen via **Mijn Telenet → Je thuisnetwerk → Modem → Geavanceerde instellingen** (expertinstellingen ontgrendelen): regel met lokaal IP `192.168.0.90`, externe poort (niet-standaard, bv. 8080; niet 25/53/135/137/139/161/162/445/1080) → interne poort 80, TCP. LAN-subnet van de modem: 192.168.0.1 (gezien 26/11). Het publieke IP-adres van het huisje hoort **niet** in deze (publieke) repo.
+**Stand 26/11:** de Ysermonde-controller (ESP32-C6 + shield v1.0, relaismodule met optocoupler op IO10) draait thuis op **v1.14d** met room-naam "Ysermonde", vast IP 192.168.0.90 (thuisnetwerk), Verwarming = Ja (relaistest OK met sensor), P1-IP 192.168.0.100 (test, antwoordt niet). Logt elke 5 min naar de Sheet.
+
+**Vóór vertrek (thuis):**
+1. `/settings`: **vast IP leegmaken** (DHCP). Anders start de controller in Ysermonde met een adres uit het thuisnetwerk en is hij daar onbereikbaar.
+2. `/settings`: **P1-IP leegmaken** (het testadres .100 bestaat in Ysermonde niet).
+3. Verwarming: laten op **Ja** als het relais al aan de Vaillant komt, anders **Nee**. SWW-boiler **Nee**.
+
+**In Ysermonde, in deze volgorde:**
+4. **Subnet van de modem wijzigen:** Mijn Telenet → Je thuisnetwerk → Modem → Geavanceerde instellingen (expertinstellingen ontgrendelen) → LAN - subnet: `192.168.30.1`. Opslaan; de modem herstart, toestellen krijgen een nieuw adres.
+5. **Proliphix nakijken:** blijft hij bereikbaar (nieuw adres in "Verbonden toestellen")? Heeft hij in zijn eigen menu een vast IP 192.168.0.x, dan dat aanpassen naar 192.168.30.x (bv. .217) of op DHCP zetten. Zijn bestaande port forwarding (indien aanwezig) mee aanpassen.
+6. **Controller op de Wi-Fi van het huisje:** start hij in AP-modus ("Vakantiehuis-Setup"): verbinden, `http://192.168.4.1/settings`, Wi-Fi van het huisje invullen (gegevens NIET in de repo). Daarna via `http://ysermonde.local/`.
+7. **Vast IP controller:** `/settings` → `192.168.30.90` → opslaan. `/advanced` → regel **DNS** = `192.168.30.1 · 8.8.8.8`.
+8. **Dongle:** in de gebruikerspoort (lichtgroen klepje), koppelen met de HomeWizard Energy-app (2,4 GHz), **lokale API aan**. Adres: liefst vast **192.168.30.91** als de app dat toelaat (de Telenet-modem kan geen adres vastzetten); anders het adres noteren dat hij krijgt.
+9. **Controle dongle:** in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude (dan v1.14 nakijken op de echte velden).
+10. `/settings` controller: **HomeWizard P1 IP** invullen → opslaan.
+11. **Nakijken:** `/advanced` → "Energie (P1-meter)" Status **OK**, vermogen en gas; landingspagina: energiekaart; ±5 min later een rij "Ysermonde" met P1-waarden in de Sheet.
+12. **Tailscale-test:** op de Wi-Fi in Ysermonde een thuiscontroller openen (bv. `http://192.168.0.80/`). Moet nu werken zonder mobiele data.
+13. **Port forwarding pas na v1.15 (login).** Via Mijn Telenet (zelfde pagina): lokaal IP `192.168.30.90`, externe poort niet-standaard (bv. 8080; niet 25/53/135/137/139/161/162/445/1080) → interne poort 80, TCP. Publiek IP, adres en klantnaam niet in deze publieke repo.
+
+**Eerste installatie van een nieuw bord (ter info):** Arduino IDE, Board ESP32C6 Dev Module, Flash Size 16 MB, Partition Scheme **Custom** (`partitions.csv`), **USB CDC On Boot: Disabled**; eerste keer met kabel via de poort **"UART"**, daarna OTA. Mac in AP-modus: "Automatisch verbinden" voor het eigen Wi-Fi tijdelijk uit, inlogvenster wegklikken maar verbonden blijven.
 
 ## 6b. Lessen netwerk (26/11) — belangrijk voor Ysermonde
 
@@ -119,7 +122,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 2. **DNS bij een vast IP:** met enkel de router als DNS faalde elke POST (HTTP -1 na 12 s), ook op .90 zonder conflict; met DHCP lukte alles. Sinds **v1.14d**: router + 8.8.8.8 als reserve, en regel "DNS" op `/advanced`. Daarmee werkt .90 (eerste rij 26/11 19:34).
 3. **Router Ysermonde (Mijn Telenet → Je thuisnetwerk → Modem → Geavanceerde instellingen):** LAN-subnet 192.168.0.1 (aanpasbaar), port forwarding instelbaar van op afstand, geen DHCP-reservatie of zichtbare DHCP-reeks. Verbonden (26/11): Proliphix .217, Telenet-toestel "Compal" .218.
 4. **Zelfde subnet als thuis = probleem met Tailscale.** Zarlardinge en Ysermonde zijn allebei 192.168.0.x. Thuis wordt 192.168.0.0/24 via Tailscale gerouteerd; op de Wi-Fi in Ysermonde is 192.168.0.x het eigen netwerk, dus de thuiscontrollers zijn daar niet bereikbaar (Filip moest Wi-Fi uitzetten en via mobiele data werken). De Sjalay heeft wel een eigen reeks (192.168.50.x).
-   **Voorstel (nog te beslissen):** het LAN-subnet van de Ysermonde-modem wijzigen naar een eigen reeks, bv. **192.168.30.x** (router 192.168.30.1). Dan: geen overlap meer, thuis bereikbaar via Tailscale vanop de Wi-Fi in Ysermonde, en later eventueel ook Ysermonde in Tailscale. Controller dan **192.168.30.90**, dongle **192.168.30.91**; de sketch gaat uit van router = .1 en werkt dus ongewijzigd. Best ter plaatse doen (de Proliphix en de tv-box krijgen een nieuw adres; heeft de Proliphix een vast IP ingesteld, dan moet dat mee aangepast worden).
+   **BESLIST (26/11):** het LAN-subnet van de Ysermonde-modem wijzigen naar een eigen reeks, bv. **192.168.30.x** (router 192.168.30.1). Dan: geen overlap meer, thuis bereikbaar via Tailscale vanop de Wi-Fi in Ysermonde, en later eventueel ook Ysermonde in Tailscale. Controller dan **192.168.30.90**, dongle **192.168.30.91**; de sketch gaat uit van router = .1 en werkt dus ongewijzigd. Best ter plaatse doen (de Proliphix en de tv-box krijgen een nieuw adres; heeft de Proliphix een vast IP ingesteld, dan moet dat mee aangepast worden).
 5. **Port forwarding pas na v1.15 (login)**, met een niet-standaard externe poort. Publiek IP, adres en klantnaam niet in deze publieke repo.
 
 ## 7. Open vragen
