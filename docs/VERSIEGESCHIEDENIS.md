@@ -5,6 +5,12 @@ Oudere geschiedenis (v0.1–v0.16): zie README.md. Nieuwe versies worden hier bo
 
 ## Na v1.14
 
+### v1.14d (26nov26) — DNS bij een vast IP
+- **Aanleiding:** na v1.14c crashte het Ysermonde-bord niet meer, maar elke POST faalde met HTTP -1 na 12 s zolang er een vast IP ingesteld was (.212, dat ook aan een Apple Watch werd uitgedeeld, én .90, zonder conflict). Met DHCP: 8 geslaagde POSTs op rij (18:32–19:07). Besluit: de naamopzoeking (DNS) werkt niet met de DNS-instelling van het vaste IP.
+- Vast IP: `WiFi.config(ip, router, 255.255.255.0, router, 8.8.8.8)`; nieuwe functie `checkStaticDns()` na het verbinden en elke minuut: is DNS 1 leeg (0.0.0.0), dan `WiFi.setDNS(router, 8.8.8.8)`.
+- `/advanced`, Controller: regel **DNS** met `WiFi.dnsIP(0)` · `WiFi.dnsIP(1)` (vast IP of DHCP).
+- Huisregel (Filip): vaste IP's onder .100, buiten de DHCP-reeks van de router.
+
 ### v1.14c (26nov26) — SNTP-crash, opstart zonder warmtevraag
 - **Aanleiding:** het Ysermonde-bord (thuis, op het eigen netwerk) herstartte elke ±5 min met `PANIC@POST`; daardoor kwam er nooit een rij in de Sheet. Backtrace (vertaald met de .elf van de v1.14b-build): `sntp_request` → `dns_gethostbyname` → `dns_alloc_pcb` → `udp_new_ip_type` → assert "Required to lock TCPIP core functionality!". "@POST" was toeval: de loop was aan het posten toen de lwIP-taak crashte. Ook met Claude's build (Async TCP 4.0.0), dus niet de bibliotheekversie. De Sjalay (4G) had er geen last van.
 - **Oplossing:** `setenv("TZ")`, `tzset()` en `configTzTime(...)` verwijderd. De sketch gebruikte de klok nergens (geen `localtime`/`strftime`): de tijdstempel in de Sheet komt van Google, de klok op de pagina's van de browser.
