@@ -106,6 +106,7 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 7. Telenet-router: vast IP voor de dongle **en** voor de controller. Eerst nakijken (26/11):
    - **Netwerk en DHCP-reeks:** in de router (`http://<gateway>`, login op de sticker) bij LAN/DHCP, of op een gsm in de Wi-Fi-details (IP-adres + router). De sketch gaat uit van een /24-netwerk met de router op **.1** (bv. 192.168.0.1 of 192.168.1.1).
    - **Vast IP kiezen** in hetzelfde netwerk, **buiten de DHCP-reeks** (thuis: onder .100; .212 botste met een Apple Watch). Kan de DHCP-reeks niet aangepast worden en begint ze laag, dan een adres helemaal bovenaan buiten de reeks.
+   - **Gezien in Mijn Telenet (26/11):** netwerk 192.168.0.x; verbonden: Proliphix-thermostaat **.217**, "Compal" (Telenet-toestel, vermoedelijk tv-box) **.218**, beide via DHCP; IPv6 staat ook aan (geen invloed, de sketch gebruikt IPv4). De DHCP-reeks zelf is daar niet zichtbaar: ter plaatse in de router nakijken.
    - DNS: sinds v1.14d router + 8.8.8.8 als reserve (thuis beantwoordde de router de DNS-vragen van het bord met vast IP niet).
 8. Controle: in de browser `http://<ip-dongle>/api/v1/data` → JSON zichtbaar? Antwoord doorsturen naar Claude.
 9. `/settings` van de controller: **HomeWizard P1 IP** invullen → opslaan.
