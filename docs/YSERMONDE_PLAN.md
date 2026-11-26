@@ -37,6 +37,9 @@ Pinindeling zoals de Sjalay (shield v2.0), dus dezelfde sketch zonder aanpassing
 
 Verschillen met de Sjalay en aandachtspunten:
 - **Geen 5 V op de OPTIONAL-connector.** Enkel het relais (verwarming) heeft 5 V nodig: VCC van de relaismodule aan de **5V-pin van de PIXEL-LINE-header** of rechtstreeks aan de 5 V-voeding; signaal aan "10 TSTAT", GND mee. Sensoren en SCD41 werken op 3,3 V.
+- **Relais verwarming (26/11):** het maakcontact van de Vaillant (nu de Proliphix, potentiaalvrij relaiscontact) wordt een **relaismodule MET optocoupler** (zoals de 4-relaismodule van de Sjalay, PC817 naast elk relais, actief-laag). Aansluiting: VCC → 5V van PIXEL-LINE, GND → GND van PIXEL-LINE, IN1 → "10 TSTAT"; COM + NO → thermostaatklemmen van de Vaillant (eerst de spanning daarop meten). Geen sketchwijziging nodig.
+  - **Niet gebruiken:** de zwarte 2-relaismodule **zonder** optocoupler (PNP-ingang aan 5 V): getest 26/11 → relais AAN bij GND **en** bij 3,3 V, enkel uit als IN1 los hangt; IN1 staat dan op 4,24 V, te veel voor een ESP-pin. Bruikbaar enkel met een diode in serie (te omslachtig, verworpen). Ook de MOSFET-modules (P- en N-kanaal) zijn niet potentiaalvrij: niet voor de ketel.
+  - Test van een nieuwe module vóór aansluiten: IN1 tegen GND → aan; tegen 3v3 → **uit**; los → uit.
 - **IO2** = "LDR2" op OPTIONAL. In de Sjalay is IO2 relais 2 (SWW); in Ysermonde staat SWW uit, dus relais 2 blijft laag. Geen LDR2 aansluiten zolang de sketch IO2 als relaisuitgang gebruikt.
 - **IO19** = "MOV2" op OPTIONAL en de devkit-pin. De sketch gebruikt IO19 voor relais 3 (power cycle sensorrail, Sjalay) en stuurt die pin als **uitgang**: **geen PIR op MOV2** aansluiten zolang dat zo is (later eventueel een keuze in `/settings`).
 - Voeding: als P1-logger volstaat USB-C (poort "UART" of "USB") met een gewone 5 V-lader. Later via de schroefklem "Power IN" (5 V, of 6–23 V met de optionele converter en de + baan doorgesneden). **Nooit twee voedingen tegelijk.**
