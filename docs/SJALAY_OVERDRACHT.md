@@ -14,7 +14,7 @@ Dit document start een nieuw gesprek met Claude over de controller van de vakant
 |---|---|
 | Plaats | vakantiewoning Sjalay, Recht; internet via 4G, toegang via een RPi 3B+ met Tailscale |
 | Sketch | `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER.ino` **v1.14** (26/11/2026: HomeWizard P1; draait in de Sjalay sinds 25/11 ±23:50, zonder P1-IP), met `partitions.csv`. Map en `.ino` hernoemd door Filip op 25/11 (was `ESP32-C6_SJALAY_CONTROLLER`) |
-| Klaar om te uploaden | `bin/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER_v1.14a.ino.bin` (26/11: compileerfix + changelog naar `docs/VERSIEGESCHIEDENIS.md`; werking = v1.14). v1.14 blijft als terugvaloptie |
+| Klaar om te uploaden | `bin/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER_v1.14b.ino.bin` (26/11: v1.14a compileerfix + changelog naar `docs/VERSIEGESCHIEDENIS.md`; v1.14b setup-AP "Vakantiehuis-Setup", enkel AP, herstart na 5 min zonder bezoeker). v1.14 blijft als terugvaloptie |
 | Logging | Google Sheets via `GoogleScript/SJALAY_SHEETS_LOGGER.gs` v1.2 (met vorstalarm per mail). **Uitzondering:** deze controller post zelf (er is geen Dashboard ter plaatse) |
 | Bibliotheken | OneWireNg (DHT-bibliotheek niet meer sinds v1.10), Adafruit NeoPixel, AsyncTCP + ESPAsyncWebServer |
 

@@ -6,8 +6,8 @@ Verwarming, warm water, verlichting en sensoren van de vakantiewoning **Sjalay (
 |---|---|
 | **Basis** | ESP32-C6 + RoomSense/Zarlar-shield, eigen webinterface, Google Sheets-logging |
 | **Toegang van buitenaf** | Raspberry Pi 3B+ met Tailscale; internet in de Sjalay via 4G |
-| **Sketch** | v1.14a, map `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/` (sinds 25/11; één sketch voor Sjalay en Ysermonde) met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
-| **Klaar om te uploaden** | `bin/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER_v1.14a.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). De sketch compileert ook gewoon lokaal in de Arduino IDE (sinds v1.14a). `v1.14` blijft als terugvaloptie |
+| **Sketch** | v1.14b, map `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/` (sinds 25/11; één sketch voor Sjalay en Ysermonde) met `partitions.csv` (map en `.ino` hebben dezelfde naam: rechtstreeks te openen in de Arduino IDE) |
+| **Klaar om te uploaden** | `bin/ESP32-C6_VAKANTIEHUIZEN_CONTROLLER_v1.14b.ino.bin`, via `/update`, gecompileerd door Claude (ESP32-core 3.3.12, nieuwste bibliotheken). De sketch compileert ook gewoon lokaal in de Arduino IDE (sinds v1.14a). `v1.14` blijft als terugvaloptie |
 | **Apps Script** | **v1.3a draait** (25/11; eindschema 63 kolommen A–BK, één Sheet voor Sjalay én Ysermonde met huisfilter in C1; oude data in tabblad "Archief v1.2"), voorheen v1.2 (`GoogleScript/SJALAY_SHEETS_LOGGER.gs`, met vorstalarm per mail) |
 | **Achtergrond** | `docs/Verwarming_in_de_Sjalay.pdf` |
 | **Laatst bijgewerkt** | 2 november 2026 |
@@ -195,7 +195,7 @@ De relais zitten op een **4-relaismodule** naast de shield (kanalen 1 en 4 in ge
 
 **Over de ELIX-voeding (3/4,5/6/7,5/9/12 V, 800 mA):** niet gebruiken zonder meting. De 4,5 V-stand is te laag (de problemen waren er bij 4,5 V) en 6 V ligt waarschijnlijk boven wat de 5V-ingang van de kaart verdraagt. Zulke draaiknopvoedingen zijn vaak niet gestabiliseerd: bij weinig belasting (de ESP32 trekt ± 0,1–0,2 A) ligt de echte spanning makkelijk 30–50 % boven de ingestelde waarde. Alleen na meting met de multimeter én als er 5 V instelbaar is.
 
-## B5. De sketch (v1.14a)
+## B5. De sketch (v1.14b)
 
 De code is de bron van waarheid; dit is een leeswijzer.
 
@@ -224,6 +224,7 @@ De code is de bron van waarheid; dit is een leeswijzer.
 | v1.4 (25/10) | Diagnose (reset-reden, opstartteller), DHT22-bewaking en -herstel, POST-timeout 5 s en foutenteller, 3 extra DS18B20-rollen, `e`/`f` = `null` bij DHT-uitval, negatieve dauwpuntmarge; vereist Apps Script v1.1. Via OTA uitgerold |
 | v1.14 (26/11) | HomeWizard P1-meter: IP in `/settings` (NVS `p1_ip`, leeg = geen P1), elke 10 s `GET /api/v1/data` (lokale API), eigen kleine JSON-lezer (ook gas via `external`/`gas_meter`). `/json` + `pa`–`pv` en `wa` = 2 (eindschema Apps Script v1.3). `/advanced`: blok "Energie (P1-meter)" met live-update; landingspagina: energiekaart. Alles enkel zichtbaar met een P1-IP. Geschreven vóór de dongle er is: na de eerste echte data nakijken |
 | v1.14a (26/11) | Compileerfix: `struct NvsNs` bovenaan, zodat de Arduino IDE lokaal compileert (de automatische prototypes kwamen vóór de struct; sinds v1.10). Volledige changelog uit de kop van de sketch verhuisd naar [`docs/VERSIEGESCHIEDENIS.md`](docs/VERSIEGESCHIEDENIS.md). Werking = v1.14 |
+| v1.14b (26/11) | **Setup-AP stabiel:** heet nu "Vakantiehuis-Setup" (was "Sjalay-Setup") en draait als **enkel AP** (was AP + client: de client bleef het opgeslagen netwerk zoeken en de radio sprong van kanaal, waardoor het AP wegviel tijdens het invullen van `/settings`, 26/11). Zonder toestel op het AP na 5 min herstart → Wi-Fi opnieuw (bv. router na een stroompanne later klaar dan de controller). Geen wijziging aan `/json`, Settings of Sheet |
 | v1.13 (25/11) | Map en `.ino` hernoemd naar `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER`. Versie in de kop van elke pagina ("<room> · Vakantiehuis v1.13", zoals de ROOM-sketch). `/update`: upload met voortgangsbalk, daarna teller "Controller herstart..." tot de controller terug is (nieuwe uptime via `/ver`), dan automatisch naar `/advanced`; meldt ook "update niet gelukt". Nieuw `GET /ver` (`versie\|uptime`). Aanleiding: OTA van v1.12 "leek te hangen" |
 | v1.12 (25/11) | Functies in `/settings`: "Verwarming aanwezig" en "SWW-boiler aanwezig" (NVS `f_heat`/`f_sww`, standaard ja). Uit = relais altijd uit, bediening en kaart verborgen (verwarming: metingen blijven als "Binnenklimaat"; SWW: hele blok weg). `/json` + `J`/`K`. Eerste stap van de Ysermonde-variant (`docs/YSERMONDE_PLAN.md`) |
 | v1.11 (20/11) | Vorstfix: `SENSOR_TEMP_MIN` 5 → −10 °C (kamer: DS18B20 en DHT22-terugval) en `SENSOR_BOILER_MIN` 0 → −10 °C. Onder 5 °C gold de kamersensor als defect → met de DHT22 weg werd de verwarming geblokkeerd, net wanneer vorstbeveiliging nodig is (15/11 02:16–11:01). Patroon gezien door Filip. Verder niets gewijzigd |

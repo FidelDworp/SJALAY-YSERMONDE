@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.14a — 26 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.14b — 26 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -12,8 +12,8 @@
 //              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
 // Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md (README.md §B5 voor het overzicht).
-// Huidige versie v1.14a: compileerfix (struct NvsNs naar boven, zodat de automatische
-// prototypes van de Arduino IDE hem kennen) en opkuis van deze kop. Werking = v1.14.
+// Huidige versie v1.14b: stabiel setup-AP "Vakantiehuis-Setup" (enkel AP, de Wi-Fi-client zoekt
+// niet meer op de achtergrond); zonder bezoeker op het AP na 5 min herstart -> Wi-Fi opnieuw proberen.
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -61,7 +61,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.14a"
+#define VH_VERSION "1.14b"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -300,6 +300,9 @@ char mdns_name[32]     = "sjalay";  // -> http://sjalay.local/, instelbaar in Se
 char mac_address[20]   = "";
 
 bool ap_mode_active = false;
+unsigned long ap_idle_since = 0;   // v1.14b: laatste moment met een toestel op het setup-AP
+#define AP_SSID       "Vakantiehuis-Setup"
+#define AP_RETRY_MS   (5UL * 60UL * 1000UL)   // v1.14b: zonder bezoeker op het AP: na 5 min herstart (Wi-Fi opnieuw)
 unsigned long boot_millis = 0;
 
 // Crash-log episode-guard (voorkomt herhaalde logs binnen dezelfde lage-heap periode)
@@ -2421,16 +2424,21 @@ void setup() {
     ap_mode_active = false;
   } else {
     Serial.println("\nWi-Fi mislukt -> Access Point voor configuratie...");
-    WiFi.mode(WIFI_AP_STA);
+    // v1.14b: enkel AP. Met WIFI_AP_STA bleef de client het opgeslagen netwerk zoeken en sprong de radio
+    // van kanaal, waardoor het AP even wegviel (26/11: verbinding weg tijdens het invullen van /settings).
+    WiFi.disconnect(true);
+    delay(100);
+    WiFi.mode(WIFI_AP);
     // Expliciet alle parameters: ssid, password(NULL=open), channel, ssid_hidden(false), max_connection
-    WiFi.softAP("Sjalay-Setup", NULL, 1, 0, 4);
+    WiFi.softAP(AP_SSID, NULL, 1, 0, 4);
     IPAddress ap_ip(192, 168, 4, 1);
     WiFi.softAPConfig(ap_ip, ap_ip, IPAddress(255, 255, 255, 0));
     Serial.println("=== ACCESS POINT GESTART ===");
-    Serial.println("SSID: Sjalay-Setup (open)");
+    Serial.println("SSID: " AP_SSID " (open)");
     Serial.println("IP: http://192.168.4.1  -> ga naar /settings");
     delay(1000);
     ap_mode_active = true;
+    ap_idle_since = millis();
     dnsServer.start(DNS_PORT, "*", ap_ip);
     Serial.println("DNS captive portal actief");
   }
@@ -2570,6 +2578,14 @@ void loop() {
   setStage(STG_WIFI);
   if (ap_mode_active) {
     dnsServer.processNextRequest();
+    // v1.14b: na een stroomonderbreking kan de router later klaar zijn dan de controller. Zit niemand op
+    // het setup-AP, dan na 5 min herstarten en de Wi-Fi opnieuw proberen. Met een bezoeker: nooit.
+    if (WiFi.softAPgetStationNum() > 0) ap_idle_since = millis();
+    else if (wifi_ssid[0] && millis() - ap_idle_since > AP_RETRY_MS) {
+      Serial.println("[WiFi] 5 min setup-AP zonder bezoeker -> herstart, Wi-Fi opnieuw proberen");
+      delay(100);
+      ESP.restart();
+    }
   } else if (WiFi.status() != WL_CONNECTED) {
     static unsigned long last_reconnect_attempt = 0;
     if (millis() - last_reconnect_attempt > 10000) {

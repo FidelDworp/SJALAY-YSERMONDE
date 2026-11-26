@@ -5,6 +5,13 @@ Oudere geschiedenis (v0.1–v0.16): zie README.md. Nieuwe versies worden hier bo
 
 ## Na v1.14
 
+### v1.14b (26nov26) — stabiel setup-AP
+- Aanleiding: bij de eerste setup van de Ysermonde-controller (26/11) viel de verbinding met het AP weg tijdens het invullen van `/settings`.
+- Het AP heet nu **"Vakantiehuis-Setup"** (was "Sjalay-Setup"), naam in `#define AP_SSID`.
+- AP-modus = `WIFI_AP` (was `WIFI_AP_STA`): `WiFi.disconnect(true)` vóór het AP start, zodat de client niet meer op de achtergrond het opgeslagen netwerk zoekt en de radio niet meer van kanaal springt.
+- Omdat de client nu niet meer zelf terugverbindt: zit er 5 min (`AP_RETRY_MS`) geen toestel op het AP, dan herstart de controller en probeert hij de Wi-Fi opnieuw (nodig als de router na een stroompanne later klaar is dan de controller). Met een toestel op het AP nooit.
+- `/json`, Settings en Sheet ongewijzigd.
+
 ### v1.14a (26nov26) — opkuis + compileerfix
 - De sketch compileerde niet in de Arduino IDE: de automatische prototypes komen vóór de eerste functie, maar `struct NvsNs` (sinds v1.10) stond pas verderop → "'NvsNs' was not declared in this scope". De struct staat nu bovenaan bij de andere vroege declaraties. Werking ongewijzigd.
 - Versiegeschiedenis uit de kop van de sketch verhuisd naar dit bestand.

@@ -91,13 +91,13 @@ Gewijzigd 24/11: de Ysermonde-controller komt eerst, als **P1-logger** (nog zond
 | **v1.17** | SCD41 als reserve voor vocht/dauwpunt + key `I` (was v1.13, daarna v1.16) | met sensor |
 | later | Watermeter (Aquaduin, draadloos): uitleesmethode nog te bekijken | — |
 
-## 6. Ysermonde-controller in gebruik nemen (met v1.14)
+## 6. Ysermonde-controller in gebruik nemen (met v1.14b)
 
 **Thuis voorbereiden (Mac, Arduino IDE):**
 1. Nieuwe ESP32-C6 (devkit volstaat voor de P1-logger; later het shield). Sketch `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER` openen.
 2. Board ESP32C6 Dev Module, Flash Size 16 MB, Partition Scheme **Custom** (`partitions.csv`), **USB CDC On Boot: Disabled**.
 3. Kabel in de USB-C-poort **"UART"**, uploaden. (Eerste flash moet met kabel: bootloader en partitietabel; daarna alles via OTA.)
-4. Controller start in AP-modus: verbinden met zijn Wi-Fi, in het portaal Wi-Fi van het huisje invullen en room-naam **"Ysermonde"**.
+4. Controller start in AP-modus: verbinden met **"Vakantiehuis-Setup"** (open, sinds v1.14b; vóór v1.14b "Sjalay-Setup"). Mac: "Automatisch verbinden" voor het eigen Wi-Fi tijdelijk uit, anders springt de Mac terug (geen internet op het AP); het inlogvenster wegklikken maar verbonden blijven en in de browser `http://192.168.4.1/settings` openen. Zonder toestel op het AP herstart de controller na 5 min en probeert hij de Wi-Fi opnieuw. In het portaal Wi-Fi van het huisje invullen en room-naam **"Ysermonde"**.
    (Kan thuis al met je eigen Wi-Fi om te testen; in Ysermonde het AP-portaal opnieuw, of Wi-Fi wijzigen via `/settings`.)
 5. `/settings`: Verwarming **Nee**, SWW-boiler **Nee**, Google Script-URL = **dezelfde** als de Sjalay, Sheets-interval 5 min.
 
