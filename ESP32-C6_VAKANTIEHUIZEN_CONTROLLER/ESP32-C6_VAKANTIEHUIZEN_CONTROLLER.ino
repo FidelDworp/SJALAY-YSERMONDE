@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.14c — 26 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.14d — 26 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -12,8 +12,8 @@
 //              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
 // Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md (README.md §B5 voor het overzicht).
-// Huidige versie v1.14c: geen SNTP meer (crashte, klok werd nergens gebruikt), geen warmtevraag bij de
-// opstart, relaispinnen eerst in rust, live AAN/UIT-tekst, room-naam in alle paginatitels.
+// Huidige versie v1.14d: DNS bij een vast IP = router + 8.8.8.8 (reserve), na het verbinden nagekeken en
+// zo nodig opnieuw gezet; regel "DNS" op /advanced.
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -61,7 +61,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.14c"
+#define VH_VERSION "1.14d"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -300,6 +300,9 @@ char mdns_name[32]     = "sjalay";  // -> http://sjalay.local/, instelbaar in Se
 char mac_address[20]   = "";
 
 bool ap_mode_active = false;
+bool static_ip_used = false;            // v1.14d: vast IP ingesteld (DNS dan zelf zetten)
+IPAddress static_gw;                    // v1.14d: router = eerste DNS bij een vast IP
+const IPAddress DNS_BACKUP(8, 8, 8, 8); // v1.14d: tweede DNS (Google) als reserve
 unsigned long ap_idle_since = 0;   // v1.14b: laatste moment met een toestel op het setup-AP
 #define AP_SSID       "Vakantiehuis-Setup"
 #define AP_RETRY_MS   (5UL * 60UL * 1000UL)   // v1.14b: zonder bezoeker op het AP: na 5 min herstart (Wi-Fi opnieuw)
@@ -988,6 +991,15 @@ const char* dsRoleLabel(int i) {
   if (i == ds_pump)    return " (ketelpomp)";
   if (i == ds_return)  return " (retour)";
   return "";
+}
+
+// v1.14d: bij een vast IP de DNS nakijken; leeg (0.0.0.0) -> opnieuw zetten (router + 8.8.8.8)
+void checkStaticDns() {
+  if (!static_ip_used || WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.dnsIP(0) == IPAddress(0, 0, 0, 0)) {
+    WiFi.setDNS(static_gw, DNS_BACKUP);
+    Serial.printf("[DNS] was leeg -> opnieuw gezet: %s + %s\n", WiFi.dnsIP(0).toString().c_str(), WiFi.dnsIP(1).toString().c_str());
+  }
 }
 
 // ============== GOOGLE SHEETS: POST /json elke 5 min ==============
@@ -1708,6 +1720,12 @@ void handleStatus(AsyncWebServerRequest *request) {
     ap_mode_active ? "192.168.4.1 (AP-modus)" : WiFi.localIP().toString().c_str());
   p->printf("<tr><td class=\"label\">mDNS-naam</td><td class=\"value\" colspan=\"2\">%s</td></tr>",
     ap_mode_active ? "n.v.t. (AP-modus)" : (String("http://") + mdns_name + ".local/").c_str());
+  if (!ap_mode_active) {   // v1.14d: DNS-servers die de controller nu echt gebruikt
+    String d0 = WiFi.dnsIP(0).toString(), d1 = WiFi.dnsIP(1).toString();
+    p->printf("<tr><td class=\"label\">DNS<br><span style=\"font-size:11px;color:#888;\">%s</span></td>"
+              "<td class=\"value\" colspan=\"2\">%s &middot; %s</td></tr>",
+              static_ip_used ? "vast IP: router + reserve" : "via DHCP (router)", d0.c_str(), d1.c_str());
+  }
   p->printf("<tr><td class=\"label\">Wi-Fi RSSI</td><td class=\"value\" id=\"v-rssi\" colspan=\"2\">%d dBm</td></tr>", ap_mode_active ? 0 : WiFi.RSSI());
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>", mac_address);
   p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
@@ -2413,8 +2431,12 @@ void setup() {
   if (local_ip.fromString(static_ip_str)) {
     IPAddress gateway = local_ip; gateway[3] = 1;
     IPAddress subnet(255, 255, 255, 0);
-    WiFi.config(local_ip, gateway, subnet, gateway);
-    Serial.printf("Static IP: %s (gateway %s)\n", local_ip.toString().c_str(), gateway.toString().c_str());
+    // v1.14d: DNS = router + 8.8.8.8 (met enkel de router als DNS mislukte thuis elke POST met HTTP -1, 26/11)
+    WiFi.config(local_ip, gateway, subnet, gateway, DNS_BACKUP);
+    static_ip_used = true;
+    static_gw = gateway;
+    Serial.printf("Static IP: %s (gateway %s, DNS %s + %s)\n", local_ip.toString().c_str(), gateway.toString().c_str(),
+                  gateway.toString().c_str(), DNS_BACKUP.toString().c_str());
   } else {
     Serial.println("Geen geldig static IP in NVS -> DHCP");
   }
@@ -2435,6 +2457,7 @@ void setup() {
     Serial.println("\nWi-Fi verbonden!");
     Serial.print("IP-adres: "); Serial.println(WiFi.localIP().toString());
     ap_mode_active = false;
+    checkStaticDns();   // v1.14d
   } else {
     Serial.println("\nWi-Fi mislukt -> Access Point voor configuratie...");
     // v1.14b: enkel AP. Met WIFI_AP_STA bleef de client het opgeslagen netwerk zoeken en sprong de radio
@@ -2599,6 +2622,10 @@ void loop() {
       delay(100);
       ESP.restart();
     }
+  } else if (WiFi.status() == WL_CONNECTED) {
+    // v1.14d: na een herverbinding (vast IP) nakijken of de DNS nog ingesteld is
+    static unsigned long last_dns_check = 0;
+    if (millis() - last_dns_check > 60000) { last_dns_check = millis(); checkStaticDns(); }
   } else if (WiFi.status() != WL_CONNECTED) {
     static unsigned long last_reconnect_attempt = 0;
     if (millis() - last_reconnect_attempt > 10000) {
