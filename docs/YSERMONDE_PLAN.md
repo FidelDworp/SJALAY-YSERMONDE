@@ -19,6 +19,28 @@ Het vakantiehuisje in **Ysermonde (Nieuwpoort)** krijgt dezelfde controller als 
 
 Wi-Fi-gegevens staan **niet** in deze (publieke) repo: ze worden ingevuld via het AP-portaal of `/settings` van de controller.
 
+## 2b. Hardware Ysermonde: shield v1.0 (foto Filip, 26/11)
+
+"ESP32-C6 shield v1.0 by iTroniX" met een QSZNTEC-devkit (DOIT ESPC6-32-module, **16 MB**, twee USB-C: "UART" en "USB").
+Pinindeling zoals de Sjalay (shield v2.0), dus dezelfde sketch zonder aanpassing:
+
+| Functie | Pin | Op de print |
+|---|---|---|
+| DS18B20 T-Bus | IO3 | RoomSense "3 T-Bus" |
+| Pixels data | IO4 | OPTIONAL "4 Pixels" + PIXEL-LINE (GND/4/5V) |
+| PIR MOV1 | IO5 | RoomSense "5 Mov1" |
+| DHT22 | IO6 | RoomSense "6 DHT22" |
+| LDR1 | IO1 | RoomSense "1 LDR1" |
+| **Relais 1 (verwarming, maakcontact Vaillant)** | **IO10** | OPTIONAL **"10 TSTAT"** |
+| I2C SDA / SCL (SCD41) | IO13 / IO11 | I2C-header SCL/SDA/GND/3v3 (met 4k7 pull-ups) |
+| Generieke IO | IO0, 8, 15, 20–23, 9 | EXTRA-header |
+
+Verschillen met de Sjalay en aandachtspunten:
+- **Geen 5 V op de OPTIONAL-connector.** Enkel het relais (verwarming) heeft 5 V nodig: VCC van de relaismodule aan de **5V-pin van de PIXEL-LINE-header** of rechtstreeks aan de 5 V-voeding; signaal aan "10 TSTAT", GND mee. Sensoren en SCD41 werken op 3,3 V.
+- **IO2** = "LDR2" op OPTIONAL. In de Sjalay is IO2 relais 2 (SWW); in Ysermonde staat SWW uit, dus relais 2 blijft laag. Geen LDR2 aansluiten zolang de sketch IO2 als relaisuitgang gebruikt.
+- **IO19** = "MOV2" op OPTIONAL en de devkit-pin. De sketch gebruikt IO19 voor relais 3 (power cycle sensorrail, Sjalay) en stuurt die pin als **uitgang**: **geen PIR op MOV2** aansluiten zolang dat zo is (later eventueel een keuze in `/settings`).
+- Voeding: als P1-logger volstaat USB-C (poort "UART" of "USB") met een gewone 5 V-lader. Later via de schroefklem "Power IN" (5 V, of 6–23 V met de optionele converter en de + baan doorgesneden). **Nooit twee voedingen tegelijk.**
+
 ## 3. Beveiliging bij port forwarding (v1.15)
 
 Met port forwarding staat de controller rechtstreeks op het internet (gewone HTTP, geen versleuteling). Daarom:
