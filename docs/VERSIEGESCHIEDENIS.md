@@ -55,6 +55,7 @@ Sketch `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER` en Apps Script `VAKANTIEHUIZEN_SHEET
 
 | Versie | Inhoud |
 |---|---|
+| v1.3b (27/11) | Huisfilter begint op rij 1 (zwarte balk) i.p.v. de koprij: de filterknopjes staan niet meer in de kolomkoppen (die wrapten). Criterium = formule "koprij of gekozen huis" |
 | v1.3a (25/11) | Archief-functie: eerst vastgezette rijen/kolommen losmaken, archief overslaan als "Data" leeg is |
 | v1.3 (24/11) | Eindschema 63 kolommen A–BK per soort data, één Sheet voor alle huizen met huisfilter in C1, alarm per huis, `testYsermonde()`; overstap met `archiveerEnNieuweKoppen()` (oude rijen naar "Archief v1.2") |
 | v1.2 (2/11) | Vorstalarm per mail (kamer/boiler/kelder) + "geen data"-melding; logt altijd naar tabblad "Data" |

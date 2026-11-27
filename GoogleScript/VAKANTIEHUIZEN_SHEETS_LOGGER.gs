@@ -1,5 +1,5 @@
 // ============================================================
-// SJALAY / YSERMONDE CONTROLLER DATA LOGGER - Google Apps Script v1.3
+// VAKANTIEHUIZEN (SJALAY / YSERMONDE) CONTROLLER DATA LOGGER - Google Apps Script v1.3b
 // Ontvangt JSON-push van de vakantiehuis-controllers (ESP32-C6, één sketch voor
 // Sjalay en Ysermonde) en logt naar ÉÉN Google Sheet, tabblad "Data", voor alle huizen
 // (zelfde URL in /settings van elk huis). Huisfilter: keuzelijst in C1 (ALL of één huis),
@@ -19,6 +19,9 @@
 //                 v1.3a (25nov26): archiveerEnNieuweKoppen() hief het vastzetten van rij 1-2 niet op
 //                 -> "niet mogelijk alle niet-vastgezette rijen te verwijderen". Opgelost; een tweede
 //                 poging maakt geen tweede (leeg) archief.
+//                 v1.3b (27nov26): de filter begint op rij 1 (zwarte balk) i.p.v. rij 2, zodat de
+//                 filterknopjes niet meer in de kolomkoppen staan (die wrapten en werden onleesbaar).
+//                 Criterium = formule "koprij OF gekozen huis", zodat rij 2 altijd zichtbaar blijft.
 //                 Overstap: archiveerEnNieuweKoppen() eenmalig (oude rijen naar tabblad "Archief v1.2",
 //                 "Data" leeg met de nieuwe koppen). Grafieken op andere tabbladen opnieuw instellen.
 //                 Ontbrekende keys (oudere sketch, functie niet aanwezig) -> lege cel.
@@ -48,7 +51,7 @@ const HEADER_ROWS = 2;      // Rij 1 = keuzelijst (C1) + titel (D1), Rij 2 = kol
 const SHEET_NAME  = "Data"; // naam van het tabblad met de logrijen
 const FILTER_CELL = "C1";   // keuzelijst huisfilter (boven de kolom "Kamer")
 const ROOM_COL    = 3;      // kolom C = Kamer (room-naam van de controller)
-const TITLE       = "SJALAY / YSERMONDE CONTROLLER DATA LOGGER v1.3a";
+const TITLE       = "VAKANTIEHUIZEN CONTROLLER DATA LOGGER v1.3b";
 // ============================================================
 
 // null/undefined (ongeldige of ontbrekende meting) -> lege cel; anders de waarde (0 blijft 0)
@@ -228,10 +231,24 @@ function applyRoomFilter_(sheet, keuze) {
   const bestaand = sheet.getFilter();
   if (bestaand) bestaand.remove();
   if (!keuze || keuze === "ALL") return;
+  // v1.3b: filter vanaf rij 1, zodat de filterknopjes in de zwarte balk staan en niet in de koppen
+  // (rij 2). Rij 2 valt dan binnen de gefilterde rijen: de formule laat de koprij altijd staan.
+  // Geen komma's of puntkomma's in de formule (werkt in elke taalinstelling van de Sheet).
   const lastRow = Math.max(sheet.getLastRow(), HEADER_ROWS + 1);
-  const range = sheet.getRange(HEADER_ROWS, 1, lastRow - HEADER_ROWS + 1, NUM_COLS);
+  const range = sheet.getRange(1, 1, lastRow, NUM_COLS);
+  const kol = columnLetter_(ROOM_COL);
+  const kop = String(COLUMNS[ROOM_COL - 1].h).replace(/"/g, '""');
+  const huis = String(keuze).replace(/"/g, '""');
+  const formule = '=(($' + kol + '2="' + kop + '")+($' + kol + '2="' + huis + '"))>0';
   range.createFilter().setColumnFilterCriteria(ROOM_COL,
-    SpreadsheetApp.newFilterCriteria().whenTextEqualTo(keuze).build());
+    SpreadsheetApp.newFilterCriteria().whenFormulaSatisfied(formule).build());
+}
+
+// Kolomnummer (1 = A) naar letter(s), bv. 3 -> "C", 63 -> "BK".
+function columnLetter_(n) {
+  let s = "";
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
 }
 
 // Huis toevoegen aan de keuzelijst als het er nog niet in staat. true = lijst gewijzigd.

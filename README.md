@@ -50,5 +50,5 @@ Zoals ze nu in `/settings` staan. Wi-Fi-gegevens, wachtwoorden en het publieke I
 |---|---|
 | `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/` | sketch (`.ino`, versie in `VH_VERSION`) + `partitions.csv` (16 MB); rechtstreeks te openen in de Arduino IDE |
 | `bin/` | klaar-om-te-uploaden firmware via `/update`: **v1.14d** (huidig) en v1.14 (terugval) |
-| `GoogleScript/VAKANTIEHUIZEN_SHEETS_LOGGER.gs` | Apps Script **v1.3a** voor de gemeenschappelijke Sheet `*R-VAKANTIEHUIZEN_Log` |
+| `GoogleScript/VAKANTIEHUIZEN_SHEETS_LOGGER.gs` | Apps Script **v1.3b** voor de gemeenschappelijke Sheet `*R-VAKANTIEHUIZEN_Log` |
 | `docs/` | documentatie (tabel hierboven) |

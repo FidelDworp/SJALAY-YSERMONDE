@@ -22,7 +22,7 @@ Repo **FidelDworp/VAKANTIEHUIZEN** (vroeger SJALAY-YSERMONDE): één ESP32-C6-sk
 | Stabiliteit | v1.14: 44 u zonder herstart; v1.14d: eerste rijen OK | 24 u zonder herstart (26→27/11) |
 | Bijzonder | DHT22 dood sinds 26/10 (power cycle nodig, Shelly Plug bij volgend bezoek) | geen RoomSense aangesloten (sensoren leeg, relais geblokkeerd); P1-dongle besteld |
 
-**Sheet:** `*R-VAKANTIEHUIZEN_Log`, Apps Script v1.3a, beide huizen elke 5 min. Claude kan de Sheet lezen via de Google-koppeling (kolom C = huis, BF = reset-reden, BG = boots, BH = POST-fouten).
+**Sheet:** `*R-VAKANTIEHUIZEN_Log`, Apps Script v1.3b, beide huizen elke 5 min. Claude kan de Sheet lezen via de Google-koppeling (kolom C = huis, BF = reset-reden, BG = boots, BH = POST-fouten).
 
 ## 3. Planning
 
