@@ -89,6 +89,8 @@ Gemeenschappelijke techniek (sketch, `/json`, Sheet): [TECHNIEK.md](TECHNIEK.md)
 
 ## 6. Open vragen
 
+- **Shelly Plug op de voeding van de controller** (idee 27/11, zoals in de Sjalay): via de Shelly-app de controller van op afstand echt stroomloos maken en weer aanzetten, ook als hij niet meer reageert. Wist meteen ook een login-blokkering. Nog te beslissen en aan te kopen.
+
 - Kan het vaste adres van de dongle in de HomeWizard-app ingesteld worden? Zo niet: het adres dat hij krijgt noteren (of later: de sketch zoekt hem zelf).
 - Spanning op de thermostaatklemmen van de Vaillant (vóór het relais aan te sluiten).
 - Watermeter: type en uitleesmethode.

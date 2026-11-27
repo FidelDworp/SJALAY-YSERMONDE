@@ -124,7 +124,7 @@ Handgeschreven instructie van Filip (25/10/2026), ook in de ketelkast bij de gel
 - **Nu:** VOLTCRAFT USPS-600 op **5 V** (max. 0,6 A), 2-polige SM-connector (rood +, zwart −), lange dunne kabel. Dat is krap voor ESP32 (Wi-Fi-pieken) + relais + sensoren.
 - **Meebrengen:** vaste, geregelde **5 V, minstens 2 A**, korte dikke kabel (≤ 0,5 m), passende SM-stekker; polariteit meten vóór aansluiten. De ELIX-voeding (3–12 V, 800 mA) niet gebruiken zonder meting (niet gestabiliseerd, 4,5 V te laag, 6 V te hoog).
 - **Shield v2.0:** twee 500 mA-PTC's (3V3- en 5V-baan). De relaisvoeding op de OPTION-connector loopt achter de 5V-PTC.
-- **Shelly Plug** op de voeding van de controller (beslist 11/11): echte power cycle van op afstand, o.a. om een vastgelopen DHT22 te resetten.
+- **Shelly Plug** op de voeding van de controller (beslist 11/11): via de Shelly-app de controller van op afstand echt stroomloos maken en weer aanzetten, ook als hij niet meer reageert. Nodig om een vastgelopen DHT22 te resetten (een softwareherstart helpt daar niet).
 
 ## B4. Openstaande punten (ter plaatse)
 
