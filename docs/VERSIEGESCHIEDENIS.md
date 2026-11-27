@@ -4,6 +4,13 @@ Sketch `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER` en Apps Script `VAKANTIEHUIZEN_SHEET
 
 ## Sketch
 
+### v1.15 (27nov26) — login en beveiliging
+- Instelbare login in `/settings`: gebruikersnaam, wachtwoord (leeg laten = niet wijzigen), "Landingspagina van buitenaf" (login vragen / open). NVS `au_user`, `au_pass`, `au_ext`. Gebruikersnaam of wachtwoord leeg = geen login (gedrag zoals v1.14d).
+- Digest-login (realm "Vakantiehuis"). Eigen netwerk (zelfde subnet): landingspagina en haar bediening open, al de rest login. Van buitenaf: alles login (behalve met de optie "open"). `/ver` en het setup-AP blijven open.
+- OTA-upload: zonder geldige login wordt er niets geschreven.
+- 5 foute pogingen per IP → 5 min blokkering (HTTP 429). `/advanced` → Controller: regel "Login" met de stand, de soort verbinding en de tellers.
+- `/json`, Sheet en de bediening zelf ongewijzigd.
+
 ### v1.14d (26nov26) — DNS bij een vast IP
 - **Aanleiding:** na v1.14c crashte het Ysermonde-bord niet meer, maar elke POST faalde met HTTP -1 na 12 s zolang er een vast IP ingesteld was (.212, dat ook aan een Apple Watch werd uitgedeeld, én .90, zonder conflict). Met DHCP: 8 geslaagde POSTs op rij (18:32–19:07). Besluit: de naamopzoeking (DNS) werkt niet met de DNS-instelling van het vaste IP.
 - Vast IP: `WiFi.config(ip, router, 255.255.255.0, router, 8.8.8.8)`; nieuwe functie `checkStaticDns()` na het verbinden en elke minuut: is DNS 1 leeg (0.0.0.0), dan `WiFi.setDNS(router, 8.8.8.8)`.

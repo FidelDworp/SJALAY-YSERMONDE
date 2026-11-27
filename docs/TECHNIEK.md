@@ -121,14 +121,19 @@ Compact schema, één schema voor de live-pagina's en de Sheet. Booleans `0`/`1`
 - **Port forwarding** enkel met login (v1.15) en een niet-standaard externe poort.
 - Wi-Fi-gegevens, wachtwoorden en publieke IP-adressen **nooit** in deze publieke repo.
 
-## 10. Beveiliging bij port forwarding (gepland v1.15)
+## 10. Login en beveiliging (v1.15)
 
 | | Op de Wi-Fi van het huis | Van buitenaf |
 |---|---|---|
 | Landingspagina (lampen, temperatuur) | open | login |
 | `/advanced`, `/settings`, `/update`, `/json`, beheer | login | login |
 
-Gebruikersnaam en wachtwoord in `/settings` (leeg = geen login, zoals de Sjalay achter Tailscale). Digest-login. De controller herkent lokale verzoeken aan het afzender-IP. Blokkering na 5 foute pogingen (5 min). Optie: landingspagina ook van buitenaf open (standaard nee).
+- **Instellen in `/settings`:** gebruikersnaam, wachtwoord (leeg laten = niet wijzigen; het formulier gaat onversleuteld, dus **enkel op de Wi-Fi van het huis** instellen) en "Landingspagina van buitenaf" (standaard: login vragen). **Gebruikersnaam leeg = geen login** (Sjalay achter Tailscale). Zonder wachtwoord staat de login ook uit.
+- **Digest-login** (realm "Vakantiehuis"): het wachtwoord gaat niet leesbaar over het net, de rest van het verkeer wel (gewone HTTP).
+- **Eigen netwerk** = afzender in hetzelfde subnet als de controller. Landingspagina + haar bediening (`/`, `/json`, `/set_setpoint`, `/set_boiler_setpoint`, `/setcolor`, `/toggle_pixel`, `/toggle_pixel_mode`, `/toggle_bed`) zijn daar open; al de rest (ook `/advanced`, `/settings`, `/update`, OTA-upload, `/reboot`) vraagt login. Altijd open: `/ver`. In AP-modus (setup) is er geen login.
+- **Blokkering:** 5 foute pogingen vanaf hetzelfde IP → 5 min "Te veel foute pogingen" (HTTP 429). Tellers op `/advanced` → Controller → Login (met "deze verbinding: eigen netwerk / van buitenaf").
+- **Wachtwoord vergeten:** seriële monitor, binnen 5 s na de opstart `R` = alle instellingen wissen (ook Wi-Fi), of het bord opnieuw flashen met de kabel en de instellingen opnieuw invullen.
+- **Test na het instellen van de port forwarding:** van op mobiele data (Wi-Fi uit) moet ook de landingspagina login vragen. Toont `/advanced` dan "deze verbinding: eigen netwerk", dan vervangt de modem het afzender-IP: meteen melden (dan is de herkenning van het eigen netwerk niet bruikbaar).
 
 ## 11. Geleerde lessen
 

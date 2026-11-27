@@ -28,6 +28,7 @@ Zoals ze nu in `/settings` staan. Wi-Fi-gegevens, wachtwoorden en het publieke I
 | Sheets-interval | 5 min | 5 min | 5 min |
 | DS18B20-rollen | kamer (RoomSense), boiler, kelder | 1 sensor (RoomSense) | kamer |
 | Pixels / Shelly's | 4 lichtgroepen, Shelly's `.11–.14` | 8 pixels (test) | Shelly-stopcontacten (later) |
+| Login (v1.15) | leeg (geen login, achter Tailscale) | leeg | **gebruiker + wachtwoord** (vóór de port forwarding), landingspagina van buitenaf: login vragen |
 | Toegang van buitenaf | Tailscale via RPi (`192.168.50.2`) | Tailscale thuisnetwerk | port forwarding op de Telenet-modem, **pas na v1.15 (login)** |
 | Internet | 4G (TP-Link Archer MR600) | thuis (Telenet) | Telenet (coax) |
 
@@ -49,6 +50,6 @@ Zoals ze nu in `/settings` staan. Wi-Fi-gegevens, wachtwoorden en het publieke I
 | Map / bestand | Inhoud |
 |---|---|
 | `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER/` | sketch (`.ino`, versie in `VH_VERSION`) + `partitions.csv` (16 MB); rechtstreeks te openen in de Arduino IDE |
-| `bin/` | klaar-om-te-uploaden firmware via `/update`: **v1.14d** (huidig) en v1.14 (terugval) |
+| `bin/` | klaar-om-te-uploaden firmware via `/update`: **v1.15** (nieuwste) en v1.14d (terugval) |
 | `GoogleScript/VAKANTIEHUIZEN_SHEETS_LOGGER.gs` | Apps Script **v1.3b** voor de gemeenschappelijke Sheet `*R-VAKANTIEHUIZEN_Log` |
 | `docs/` | documentatie (tabel hierboven) |

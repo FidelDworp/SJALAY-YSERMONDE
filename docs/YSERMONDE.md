@@ -85,7 +85,7 @@ Gemeenschappelijke techniek (sketch, `/json`, Sheet): [TECHNIEK.md](TECHNIEK.md)
 10. `/settings`: **HomeWizard P1 IP** invullen.
 11. **Nakijken:** `/advanced` → "Energie (P1-meter)" Status OK; landingspagina: energiekaart; ±5 min later een rij "Ysermonde" met P1-waarden in de Sheet.
 12. **Tailscale-test:** op de Wi-Fi van het huisje een thuiscontroller openen (bv. `http://192.168.0.80/`), zonder mobiele data.
-13. **Port forwarding** pas na v1.15.
+13. **Login (v1.15)** in `/settings` instellen (op de Wi-Fi van het huis), dan pas de **port forwarding**. Test van op mobiele data: ook de landingspagina vraagt login, en `/advanced` toont "deze verbinding: van buitenaf".
 
 ## 6. Open vragen
 

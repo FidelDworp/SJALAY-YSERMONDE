@@ -28,7 +28,7 @@ Repo **FidelDworp/VAKANTIEHUIZEN** (vroeger SJALAY-YSERMONDE): één ESP32-C6-sk
 
 | Versie | Inhoud | Status |
 |---|---|---|
-| **v1.15** | **Login en beveiliging** voor port forwarding (TECHNIEK §10) | volgende stap, na GO |
+| **v1.15** | **Login en beveiliging** voor port forwarding (TECHNIEK §10) | code klaar 27/11, te testen op het Ysermonde-bord |
 | v1.16 | SCD41: CO2 tonen en loggen (key `H`) | na v1.15 |
 | v1.17 | SCD41 als reserve voor vocht/dauwpunt (key `I`) | na v1.16 |
 | later | Watermeter Ysermonde (`wa`–`wc`) | methode nog te bekijken |

@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.14d — 26 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.15 — 27 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -11,9 +11,10 @@
 //              Seriële monitor en flashen via de USB-C-poort "UART" (115200 baud); de poort
 //              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
-// Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md (README.md §B5 voor het overzicht).
-// Huidige versie v1.14d: DNS bij een vast IP = router + 8.8.8.8 (reserve), na het verbinden nagekeken en
-// zo nodig opnieuw gezet; regel "DNS" op /advanced.
+// Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md. Documentatie: README.md en docs/.
+// Huidige versie v1.15: instelbare login (digest) voor port forwarding. Leeg = geen login (zoals voorheen).
+// Op het eigen netwerk is de landingspagina open, de rest vraagt login; van buitenaf vraagt alles login
+// (optie: landingspagina ook van buitenaf open). Blokkering na 5 foute pogingen per IP (5 min).
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -61,7 +62,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.14d"
+#define VH_VERSION "1.15"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -214,6 +215,22 @@ char gas_url[200] = "";           // Apps Script webhook-URL; leeg = uitgeschake
 
 // v1.14: HomeWizard P1-meter (lokale API)
 char p1_ip[40] = "";              // IP of naam van de dongle; leeg = geen P1
+
+// v1.15: login (digest) en beveiliging bij port forwarding
+char auth_user[24] = "";          // leeg = geen login
+char auth_pass[40] = "";
+bool auth_ext_open = false;       // landingspagina ook van buitenaf zonder login
+#define AUTH_REALM      "Vakantiehuis"
+#define AUTH_MAX_FAILS  5
+#define AUTH_BLOCK_MS   (5UL * 60UL * 1000UL)
+#define ACC_OPEN        0         // altijd open (/ver, captive portal)
+#define ACC_USER        1         // landingspagina + bediening ervan: open op het eigen netwerk
+#define ACC_ADMIN       2         // al de rest: altijd login (als login aan staat)
+struct AuthSlot { uint32_t ip; uint8_t fails; unsigned long until; };
+AuthSlot auth_slots[8];
+uint32_t auth_fail_total = 0;     // foute pogingen sinds boot
+uint32_t auth_block_total = 0;    // blokkeringen sinds boot
+bool ota_auth_ok = true;          // v1.15: mag de lopende OTA-upload schrijven?
 #define P1_POLL_MS   10000UL      // elke 10 s uitlezen
 #define P1_STALE_MS  60000UL      // waarden ouder dan 60 s -> null
 struct P1Data {
@@ -1002,6 +1019,81 @@ void checkStaticDns() {
   }
 }
 
+// ============== v1.15: LOGIN EN BEVEILIGING ==============
+bool authActive() { return auth_user[0] != 0 && auth_pass[0] != 0 && !ap_mode_active; }
+
+uint32_t clientIp4(AsyncWebServerRequest *r) {
+  IPAddress ip = r->client()->remoteIP();
+  if (ip.type() != IPv4) return 0;
+  return (uint32_t)ip;
+}
+
+// Komt het verzoek van het eigen netwerk (zelfde subnet als de controller)?
+bool isLocalClient(AsyncWebServerRequest *r) {
+  if (ap_mode_active) return true;
+  IPAddress rip = r->client()->remoteIP();
+  if (rip.type() != IPv4) return false;
+  IPAddress lip = WiFi.localIP(), m = WiFi.subnetMask();
+  for (int i = 0; i < 4; i++) if ((rip[i] & m[i]) != (lip[i] & m[i])) return false;
+  return true;
+}
+
+int authSlotFor(uint32_t ip, bool create) {
+  int free_i = -1, oldest_i = 0;
+  for (int i = 0; i < 8; i++) {
+    if (auth_slots[i].ip == ip && ip != 0) return i;
+    if (auth_slots[i].ip == 0 && free_i < 0) free_i = i;
+    if (auth_slots[i].until < auth_slots[oldest_i].until) oldest_i = i;
+  }
+  if (!create) return -1;
+  int i = (free_i >= 0) ? free_i : oldest_i;
+  auth_slots[i].ip = ip; auth_slots[i].fails = 0; auth_slots[i].until = 0;
+  return i;
+}
+
+bool authBlocked(uint32_t ip) {
+  int i = authSlotFor(ip, false);
+  return i >= 0 && auth_slots[i].until != 0 && (long)(auth_slots[i].until - millis()) > 0;
+}
+
+// Mag dit verzoek door? Zo niet: antwoordt zelf (login vragen of 429) en geeft false.
+bool authAllowed(AsyncWebServerRequest *r, uint8_t level) {
+  if (level == ACC_OPEN || !authActive()) return true;
+  if (level == ACC_USER && (auth_ext_open || isLocalClient(r))) return true;
+  uint32_t ip = clientIp4(r);
+  if (authBlocked(ip)) {
+    r->send(429, "text/plain", "Te veel foute pogingen. Probeer over 5 minuten opnieuw.");
+    return false;
+  }
+  if (r->authenticate(auth_user, auth_pass, AUTH_REALM, false)) {
+    int i = authSlotFor(ip, false);
+    if (i >= 0) auth_slots[i].fails = 0;
+    return true;
+  }
+  if (r->hasHeader("Authorization")) {          // echte (foute) poging, niet de eerste vraag
+    auth_fail_total++;
+    int i = authSlotFor(ip, true);
+    if (++auth_slots[i].fails >= AUTH_MAX_FAILS) {
+      auth_slots[i].fails = 0;
+      auth_slots[i].until = millis() + AUTH_BLOCK_MS;
+      if (auth_slots[i].until == 0) auth_slots[i].until = 1;
+      auth_block_total++;
+      Serial.printf("[LOGIN] %s geblokkeerd voor 5 min\n", r->client()->remoteIP().toString().c_str());
+      r->send(429, "text/plain", "Te veel foute pogingen. Probeer over 5 minuten opnieuw.");
+      return false;
+    }
+  }
+  r->requestAuthentication(AUTH_REALM, true);
+  return false;
+}
+
+// Zelfde controle zonder te antwoorden of te tellen (voor de OTA-upload, die in stukken binnenkomt).
+bool authQuiet(AsyncWebServerRequest *r) {
+  if (!authActive()) return true;
+  if (authBlocked(clientIp4(r))) return false;
+  return r->authenticate(auth_user, auth_pass, AUTH_REALM, false);
+}
+
 // ============== GOOGLE SHEETS: POST /json elke 5 min ==============
 void postToGoogleSheets() {
   sheets_last_post = millis();
@@ -1288,6 +1380,9 @@ void loadConfigFromNVS() {
   feat_heat       = preferences.getBool("f_heat", true);   // v1.12
   feat_sww        = preferences.getBool("f_sww", true);    // v1.12
   { String t = preferences.getString("p1_ip", ""); strlcpy(p1_ip, t.c_str(), sizeof(p1_ip)); }   // v1.14
+  { String t = preferences.getString("au_user", ""); strlcpy(auth_user, t.c_str(), sizeof(auth_user)); }   // v1.15
+  { String t = preferences.getString("au_pass", ""); strlcpy(auth_pass, t.c_str(), sizeof(auth_pass)); }
+  auth_ext_open = preferences.getBool("au_ext", false);
 }
 
 void loadPixelConfigFromNVS() {
@@ -1726,6 +1821,14 @@ void handleStatus(AsyncWebServerRequest *request) {
               "<td class=\"value\" colspan=\"2\">%s &middot; %s</td></tr>",
               static_ip_used ? "vast IP: router + reserve" : "via DHCP (router)", d0.c_str(), d1.c_str());
   }
+  {   // v1.15: login
+    char lb[200];
+    if (!authActive()) snprintf(lb, sizeof(lb), "uit%s", (auth_user[0] && !auth_pass[0]) ? " (gebruiker ingesteld, maar nog geen wachtwoord)" : "");
+    else snprintf(lb, sizeof(lb), "aan (%s) &middot; landingspagina buiten: %s &middot; foute pogingen %u, blokkeringen %u",
+                  auth_user, auth_ext_open ? "open" : "login", (unsigned)auth_fail_total, (unsigned)auth_block_total);
+    p->printf("<tr><td class=\"label\">Login<br><span style=\"font-size:11px;color:#888;\">deze verbinding: %s</span></td>"
+              "<td class=\"value\" colspan=\"2\">%s</td></tr>", isLocalClient(request) ? "eigen netwerk" : "van buitenaf", lb);
+  }
   p->printf("<tr><td class=\"label\">Wi-Fi RSSI</td><td class=\"value\" id=\"v-rssi\" colspan=\"2\">%d dBm</td></tr>", ap_mode_active ? 0 : WiFi.RSSI());
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\" colspan=\"2\">%s</td></tr>", mac_address);
   p->printf("<tr><td class=\"label\">Vrije heap</td><td class=\"value\" id=\"v-heap\" colspan=\"2\">%u KB</td></tr>", (unsigned)(ESP.getFreeHeap()/1024));
@@ -1890,6 +1993,15 @@ void handleSettings(AsyncWebServerRequest *request) {
     "<td class=\"control\"><input type=\"text\" name=\"p1ip\" value=\"%s\" maxlength=\"39\" placeholder=\"192.168.x.y\" style=\"width:160px;\"></td></tr>", p1_ip);   // v1.14
   p->printf("<tr><td class=\"label\">Sheets-interval<br><span style=\"font-size:11px;color:#888;\">ook PIR-telvenster (trig/X min)</span></td>"
     "<td class=\"control\"><input type=\"number\" name=\"sheetsint\" min=\"1\" max=\"60\" value=\"%d\" style=\"width:60px;\"> min</td></tr>", sheets_interval_min);
+  // v1.15: login
+  p->printf("<tr><td class=\"label\">Login gebruikersnaam<br><span style=\"font-size:11px;color:#888;\">leeg = geen login (zoals voorheen)</span></td>"
+    "<td class=\"control\"><input type=\"text\" name=\"auser\" value=\"%s\" maxlength=\"23\" autocomplete=\"off\" style=\"width:160px;\"></td></tr>", auth_user);
+  p->printf("<tr><td class=\"label\">Login wachtwoord<br><span style=\"font-size:11px;color:#888;\">leeg laten = niet wijzigen. Enkel instellen op de Wi-Fi van het huis (het formulier gaat onversleuteld)</span></td>"
+    "<td class=\"control\"><input type=\"password\" name=\"apass\" value=\"\" maxlength=\"39\" autocomplete=\"new-password\" placeholder=\"%s\" style=\"width:160px;\"></td></tr>",
+    auth_pass[0] ? "(ongewijzigd)" : "(nog geen)");
+  p->printf("<tr><td class=\"label\">Landingspagina van buitenaf<br><span style=\"font-size:11px;color:#888;\">op de Wi-Fi van het huis is ze altijd open</span></td>"
+    "<td class=\"control\"><select name=\"aext\"><option value=\"0\"%s>login vragen</option><option value=\"1\"%s>open</option></select></td></tr>",
+    auth_ext_open ? "" : " selected", auth_ext_open ? " selected" : "");
   p->printf("<tr><td class=\"label\">MAC-adres</td><td class=\"value\">%s</td></tr>", mac_address);
   p->print("</table>");
 
@@ -2027,6 +2139,19 @@ void handleSaveSettings(AsyncWebServerRequest *request) {
     strlcpy(p1_ip, v.c_str(), sizeof(p1_ip));
     preferences.putString("p1_ip", p1_ip);
     p1_status = p1_ip[0] ? 1 : 2; p1_last_ok = 0; p1_last_try = 0;
+  }
+  if (request->hasParam("auser")) {   // v1.15
+    String v = request->getParam("auser")->value(); v.trim();
+    strlcpy(auth_user, v.c_str(), sizeof(auth_user));
+    preferences.putString("au_user", auth_user);
+  }
+  if (request->hasParam("apass")) {
+    String v = request->getParam("apass")->value();
+    if (v.length() > 0) { strlcpy(auth_pass, v.c_str(), sizeof(auth_pass)); preferences.putString("au_pass", auth_pass); }
+  }
+  if (request->hasParam("aext")) {
+    auth_ext_open = (request->getParam("aext")->value().toInt() != 0);
+    preferences.putBool("au_ext", auth_ext_open);
   }
   if (request->hasParam("sheetsint")) {
     sheets_interval_min = constrain(request->getParam("sheetsint")->value().toInt(), 1, 60);
@@ -2498,27 +2623,28 @@ void setup() {
   DefaultHeaders::Instance().addHeader("Pragma", "no-cache");
   DefaultHeaders::Instance().addHeader("Expires", "-1");
 
-  server.on("/", HTTP_GET, handleLanding);
-  server.on("/advanced", HTTP_GET, handleStatus);
-  server.on("/settings", HTTP_GET, handleSettings);
-  server.on("/save_settings", HTTP_GET, handleSaveSettings);
-  server.on("/factory_reset", HTTP_GET, handleFactoryReset);
-  server.on("/clear_crash_log", HTTP_GET, handleClearCrashLog);
-  server.on("/dht_reset", HTTP_GET, handleDhtReset);
-  server.on("/rescan_ds", HTTP_GET, handleRescanDS);
-  server.on("/toggle_heating_auto", HTTP_GET, handleToggleHeatingAuto);
-  server.on("/toggle_relay_manual", HTTP_GET, handleToggleRelayManual);
-  server.on("/set_setpoint", HTTP_GET, handleSetSetpoint);
-  server.on("/toggle_sww_auto", HTTP_GET, handleToggleSWWAuto);
-  server.on("/toggle_relay2_manual", HTTP_GET, handleToggleRelay2Manual);
-  server.on("/set_boiler_setpoint", HTTP_GET, handleSetBoilerSetpoint);
-  server.on("/toggle_pixel_mode", HTTP_GET, handleTogglePixelMode);
-  server.on("/toggle_pixel", HTTP_GET, handleTogglePixel);
-  server.on("/setcolor", HTTP_GET, handleSetColor);
-  server.on("/set_fade_duration", HTTP_GET, handleSetFadeDuration);
-  server.on("/set_light_on_min", HTTP_GET, handleSetLightOnMin);
-  server.on("/toggle_bed", HTTP_GET, handleToggleBed);
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleLanding(r); });
+  server.on("/advanced", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleStatus(r); });
+  server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleSettings(r); });
+  server.on("/save_settings", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleSaveSettings(r); });
+  server.on("/factory_reset", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleFactoryReset(r); });
+  server.on("/clear_crash_log", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleClearCrashLog(r); });
+  server.on("/dht_reset", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleDhtReset(r); });
+  server.on("/rescan_ds", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleRescanDS(r); });
+  server.on("/toggle_heating_auto", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleToggleHeatingAuto(r); });
+  server.on("/toggle_relay_manual", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleToggleRelayManual(r); });
+  server.on("/set_setpoint", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleSetSetpoint(r); });
+  server.on("/toggle_sww_auto", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleToggleSWWAuto(r); });
+  server.on("/toggle_relay2_manual", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleToggleRelay2Manual(r); });
+  server.on("/set_boiler_setpoint", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleSetBoilerSetpoint(r); });
+  server.on("/toggle_pixel_mode", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleTogglePixelMode(r); });
+  server.on("/toggle_pixel", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleTogglePixel(r); });
+  server.on("/setcolor", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleSetColor(r); });
+  server.on("/set_fade_duration", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleSetFadeDuration(r); });
+  server.on("/set_light_on_min", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleSetLightOnMin(r); });
+  server.on("/toggle_bed", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_USER)) handleToggleBed(r); });
   server.on("/capabilities", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!authAllowed(request, ACC_ADMIN)) return;   // v1.15
     AsyncResponseStream *p = request->beginResponseStream("application/json");
     p->print("{\"pixels\":[");
     for (int i = 0; i < pixels_num; i++) {
@@ -2534,20 +2660,23 @@ void setup() {
     request->send(p);
   });
   server.on("/json", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!authAllowed(request, ACC_USER)) return;   // v1.15: de landingspagina leest /json
     request->send(200, "application/json", getJSON());
   });
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if (!authAllowed(request, ACC_ADMIN)) return;   // v1.15
     request->send(200, "text/plain", "Herstart...");
     delay(300);
     ESP.restart();
   });
-  server.on("/update", HTTP_GET, handleOtaPage);
+  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleOtaPage(r); });
   server.on("/ver", HTTP_GET, [](AsyncWebServerRequest *request) {   // v1.13: "versie|uptime_s" voor de OTA-pagina
     char b[32]; snprintf(b, sizeof(b), "%s|%lu", VH_VERSION, (millis() - boot_millis) / 1000UL);
     request->send(200, "text/plain", b);
   });
   server.on("/update", HTTP_POST,
     [](AsyncWebServerRequest *request) {
+      if (!authAllowed(request, ACC_ADMIN)) return;   // v1.15 (de upload zelf werd al geweigerd)
       // v1.10: enkel OK als de update echt afgerond is; anders de reden tonen
       bool ok = ota_done && ota_err[0] == 0;
       String body;
@@ -2565,6 +2694,8 @@ void setup() {
     },
     [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
       if (!index) {
+        ota_auth_ok = authQuiet(request);   // v1.15: zonder geldige login niets schrijven
+        if (!ota_auth_ok) { Serial.println("[OTA] geweigerd: geen geldige login"); return; }
         Serial.printf("[OTA] Start: %s\n", filename.c_str());
         setStage(STG_OTA);
         ota_err[0] = 0;
@@ -2578,6 +2709,7 @@ void setup() {
           snprintf(ota_err, sizeof(ota_err), "start mislukt: %s", Update.errorString());
         }
       }
+      if (!ota_auth_ok) return;   // v1.15
       if (ota_err[0] == 0 && Update.write(data, len) != len) {
         Update.printError(Serial);
         snprintf(ota_err, sizeof(ota_err), "schrijven mislukt: %s", Update.errorString());
