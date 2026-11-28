@@ -29,9 +29,22 @@ Repo **FidelDworp/VAKANTIEHUIZEN** (vroeger SJALAY-YSERMONDE): één ESP32-C6-sk
 | Versie | Inhoud | Status |
 |---|---|---|
 | **v1.15** | **Login en beveiliging** voor port forwarding (TECHNIEK §10) | 27/11 op het Ysermonde-bord: login werkt op het eigen netwerk; test van buitenaf ter plaatse (YSERMONDE §5 stap 13) |
-| v1.16 | SCD41: CO2 tonen en loggen (key `H`) | na v1.15 |
-| v1.17 | SCD41 als reserve voor vocht/dauwpunt (key `I`) | na v1.16 |
+| v1.16 | **Config-export** `/config.json` (zie §3b) | volgende stap, na GO |
+| v1.17 | SCD41: CO2 tonen en loggen (key `H`) | na v1.16 |
+| v1.18 | SCD41 als reserve voor vocht/dauwpunt (key `I`) | na v1.17 |
 | later | Watermeter Ysermonde (`wa`–`wc`) | methode nog te bekijken |
+
+## 3b. Plan config-export (beslist 28/11)
+
+Doel: bij een defecte controller de vervanger snel en juist instellen (Shelly-IP's, DS18B20-rollen, pixelnamen, setpoints, drempels…).
+- **`GET /config.json`** (admin, achter login): overloopt **automatisch alle sleutels** van de NVS-naamruimte `sjalay-cfg` met `nvs_entry_find` (zelfde techniek als de NVS-regel op `/advanced`) en schrijft ze met hun type uit: `{"room":…,"version":…,"date":…,"nvs":{"sleutel":waarde,…}}`. Geen code per instelling: nieuwe instellingen komen er vanzelf in.
+- **Geheimen weggelaten** (Wi-Fi-wachtwoord, login-wachtwoord → `"***"`), zodat het bestand veilig in de repo kan.
+- Als **download** (`<room>_config_<datum>.json`); knop "Config downloaden" op `/settings`.
+- **Enkel exporteren.** Terugzetten (upload) eventueel later; tot dan bij een vervanging `/settings` invullen met het bestand ernaast.
+- **Geen Google Sheet** (config verandert zelden).
+- Gewicht: ±60 regels, 1–2 KB flash, geen extra RAM (gestreamd).
+- Bewaren in de repo: map `config/`, per controller het laatste bestand. Regel: na elke wijziging in `/settings` de config downloaden.
+- Zelfde code ook voor de ROOM-sketch (overdracht in de esp32c6_rooms-repo).
 
 **Kleine punten** (meenemen in een volgende versie, telkens na GO):
 - Lege cel in plaats van 0,0 als er geen kamertemperatuur is.
