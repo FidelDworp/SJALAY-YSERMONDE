@@ -10,7 +10,8 @@ Repo **FidelDworp/VAKANTIEHUIZEN** (vroeger SJALAY-YSERMONDE): één ESP32-C6-sk
 - Eén stap per versie, daarna een testperiode (±24–48 u in de Sheet nakijken).
 - Bij elke sketchwijziging: kopregel en `VH_VERSION`, [VERSIEGESCHIEDENIS](VERSIEGESCHIEDENIS.md), betrokken docs. Claude compileert en zet de `.bin` in `bin/` (huidige + één terugvalversie). Filip compileert ook lokaal als controle.
 - Alles via OTA (`/update`). `/json`-sleutels en bedieningsadressen niet wijzigen zonder akkoord.
-- Docs in `docs/`, firmware in `bin/`. .ino/.md niet in de chat tonen tenzij gevraagd; rechtstreeks op GitHub bijwerken. Commando's voor de Mac kant-en-klaar geven.
+- **Nieuwe NVS-sleutel:** meteen een regel in `CFG_LABELS` (label voor de config-export, op de plaats van `/settings`).
+- Docs in `docs/`, firmware in `bin/`, configbestanden in `config/`. .ino/.md niet in de chat tonen tenzij gevraagd; rechtstreeks op GitHub bijwerken. Commando's voor de Mac kant-en-klaar geven.
 - **Publieke repo:** geen Wi-Fi-gegevens, wachtwoorden, publieke IP-adressen of klantgegevens.
 - Overkoepelende afspraken: [ZARLAR_OVERDRACHT](https://github.com/FidelDworp/Zarlardinge-Home-Automation/blob/main/docs/ZARLAR_OVERDRACHT.md).
 
@@ -29,7 +30,7 @@ Repo **FidelDworp/VAKANTIEHUIZEN** (vroeger SJALAY-YSERMONDE): één ESP32-C6-sk
 | Versie | Inhoud | Status |
 |---|---|---|
 | **v1.15** | **Login en beveiliging** voor port forwarding (TECHNIEK §10) | 27/11 op het Ysermonde-bord: login werkt op het eigen netwerk; test van buitenaf ter plaatse (YSERMONDE §5 stap 13) |
-| v1.16 | **Config-export** `/config.json` (zie §3b) | volgende stap, na GO |
+| v1.16 | **Config-export** `/config.json` (zie §3b) | code klaar 28/11, te testen |
 | v1.17 | SCD41: CO2 tonen en loggen (key `H`) | na v1.16 |
 | v1.18 | SCD41 als reserve voor vocht/dauwpunt (key `I`) | na v1.17 |
 | later | Watermeter Ysermonde (`wa`–`wc`) | methode nog te bekijken |

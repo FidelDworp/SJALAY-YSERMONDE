@@ -4,6 +4,13 @@ Sketch `ESP32-C6_VAKANTIEHUIZEN_CONTROLLER` en Apps Script `VAKANTIEHUIZEN_SHEET
 
 ## Sketch
 
+### v1.16 (28nov26) — config-export
+- Nieuw adres **`/config.json`** (admin, achter login): alle sleutels van de NVS-naamruimte `sjalay-cfg`, automatisch overlopen (`nvs_entry_find`), elk met **label** en waarde: `"hmin": { "label": "Minimum kamer-setpoint (graden C)", "value": 5 }`. Kop met room, versie, datum (van de browser), MAC en IP.
+- Volgorde = volgorde van `/settings`, daarna de bedieningsstanden; sleutels zonder label achteraan met "(geen label)". Labeltabel `CFG_LABELS` bovenaan de sketch (reeksen zoals `pixel_nick_*`).
+- Wachtwoorden (Wi-Fi, login) als `***`. Floats (dauwpuntmarge, hysterese) als getal, andere blobs (DS18B20-adressen) als hex.
+- `/settings`: blok "Configuratie bewaren" met **Bekijken** en **Downloaden** (`<room>_config_<datum>.json`). Enkel exporteren, niets terugzetten.
+- Map `config/` in de repo voor de bestanden.
+
 ### v1.15 (27nov26) — login en beveiliging
 - Instelbare login in `/settings`: gebruikersnaam, wachtwoord (leeg laten = niet wijzigen), "Landingspagina van buitenaf" (login vragen / open). NVS `au_user`, `au_pass`, `au_ext`. Gebruikersnaam of wachtwoord leeg = geen login (gedrag zoals v1.14d).
 - Digest-login (realm "Vakantiehuis"). Eigen netwerk (zelfde subnet): landingspagina en haar bediening open, al de rest login. Van buitenaf: alles login (behalve met de optie "open"). `/ver` en het setup-AP blijven open.

@@ -32,6 +32,7 @@ Relaismodules: **met optocoupler**, actief-laag, op 5 V. Alle relais zijn fail-s
 
 - **Pagina's:** `/` landingspagina (gebruikers), `/advanced` (technisch, ververst elke 3 s), `/settings`, `/update` (OTA), `/json` (live data), `/ver` (`versie|uptime`).
 - **Bediening:** `/toggle_heating_auto`, `/toggle_relay_manual`, `/set_setpoint?value=`, `/toggle_sww_auto`, `/toggle_relay2_manual`, `/set_boiler_setpoint?value=`, `/toggle_pixel?idx=`, `/toggle_pixel_mode`, `/toggle_bed`, `/setcolor?r=&g=&b=`, `/set_fade_duration`, `/set_light_on_min`.
+- **Config:** `/config.json` (alle instellingen met label; `?dl=1` = als bestand), knoppen onderaan `/settings` (v1.16).
 - **Beheer:** `/dht_reset`, `/rescan_ds`, `/save_settings`, `/factory_reset`, `/clear_crash_log`, `/reboot`, `/capabilities`.
 - De landingspagina zet bij elke opening beide regelkringen op **Automatisch**.
 

@@ -1,5 +1,5 @@
 // ============================================================================
-// VAKANTIEHUIZEN CONTROLLER — v1.15 — 27 nov 2026
+// VAKANTIEHUIZEN CONTROLLER — v1.16 — 28 nov 2026
 // In Recht: Remote bediening WOLF-ketel (F/CNK/U-25) + SWW-boiler (CB-155) — vakantiehuis
 // Sjalay, Recht — via ESP32-C6 + RoomSense shield + 4G (Telenet ONE / Archer MR600)
 // Filip Delannoy — Zarlar thuisautomatisering
@@ -12,9 +12,9 @@
 //              "USB" (IO12/IO13) wordt niet meer gebruikt. Bediening en updates via OTA (/update).
 //
 // Versiegeschiedenis: docs/VERSIEGESCHIEDENIS.md. Documentatie: README.md en docs/.
-// Huidige versie v1.15: instelbare login (digest) voor port forwarding. Leeg = geen login (zoals voorheen).
-// Op het eigen netwerk is de landingspagina open, de rest vraagt login; van buitenaf vraagt alles login
-// (optie: landingspagina ook van buitenaf open). Blokkering na 5 foute pogingen per IP (5 min).
+// Huidige versie v1.16: config-export /config.json (alle NVS-instellingen met label, in de volgorde van
+// /settings; wachtwoorden als ***), knoppen "Bekijken" en "Downloaden" onderaan /settings.
+// v1.15: instelbare login (digest) voor port forwarding (zie docs/TECHNIEK.md §10).
 // ----------------------------------------------------------------------------
 
 // Verplicht voor ESP32-C6 (RISC-V) in Arduino IDE — zonder dit werkt Serial niet correct
@@ -41,7 +41,62 @@
 
 // Typen die in functieparameters voorkomen: hier bovenaan, vóór de eerste functie, omdat de
 // Arduino IDE daar automatisch de prototypes invoegt (v1.14a).
-struct NvsNs { char name[16]; size_t used; };   // NVS-naamruimte + gebruikte vakjes (/advanced)
+struct NvsNs { char name[16]; size_t used; };
+
+// v1.16: labels voor de config-export, in de volgorde van /settings. Sleutel eindigend op '*' = reeks
+// (sleutel + volgnummer, label met %d). Soort: 's' gewoon, 'x' geheim (***), 'f' float (blob van 4 bytes).
+// Nieuwe NVS-sleutel? Hier één regel toevoegen. Ontbreekt hij, dan komt hij achteraan met "(geen label)".
+struct CfgLabel { const char* key; const char* label; char kind; };
+const CfgLabel CFG_LABELS[] = {
+  {"room_id",       "Room-naam", 's'},
+  {"wifi_ssid",     "Wi-Fi SSID", 's'},
+  {"wifi_password", "Wi-Fi wachtwoord", 'x'},
+  {"static_ip",     "Vast IP (leeg = DHCP)", 's'},
+  {"mdns_name",     "mDNS-naam", 's'},
+  {"f_heat",        "Verwarming aanwezig (1 = ja)", 's'},
+  {"f_sww",         "SWW-boiler aanwezig (1 = ja)", 's'},
+  {"dew_margin",    "Dauwpuntmarge (graden C)", 'f'},
+  {"dew_en",        "Dauwpuntbeveiliging (1 = aan)", 's'},
+  {"hyst_cv",       "Hysterese verwarming (graden C)", 'f'},
+  {"hyst_sww",      "Hysterese SWW (graden C)", 'f'},
+  {"heat_min",      "Minimum kamer-setpoint (graden C)", 's'},
+  {"sww_min",       "Minimum boiler-setpoint (graden C)", 's'},
+  {"ldr_dk2",       "LDR donker-drempel (0-100, donker onder)", 's'},
+  {"ldr_dark",      "LDR donker-drempel, oude schaal (voor v1.7, niet meer gebruikt)", 's'},
+  {"pixels_num",    "Aantal pixels", 's'},
+  {"gas_url",       "Google Script-URL", 's'},
+  {"p1_ip",         "HomeWizard P1 IP", 's'},
+  {"sheets_min",    "Sheets-interval (min)", 's'},
+  {"au_user",       "Login gebruikersnaam", 's'},
+  {"au_pass",       "Login wachtwoord", 'x'},
+  {"au_ext",        "Landingspagina van buitenaf open (1 = ja)", 's'},
+  {"pixel_nick_*",  "Pixel %d: naam", 's'},
+  {"shelly_*",      "Pixel %d: Shelly's (ip:naam)", 's'},
+  {"ds_count",      "DS18B20: aantal geregistreerd", 's'},
+  {"ds_addr_*",     "DS18B20 %d: adres", 's'},
+  {"ds_nick_*",     "DS18B20 %d: naam", 's'},
+  {"ds_primary",    "Primaire sensor (kamer), nummer", 's'},
+  {"ds_boiler",     "Boilersensor, nummer (-1 = geen)", 's'},
+  {"ds_cellar",     "Keldersensor, nummer (-1 = geen)", 's'},
+  {"ds_pump",       "Ketelpompsensor, nummer (-1 = geen)", 's'},
+  {"ds_return",     "Retoursensor, nummer (-1 = geen)", 's'},
+  {"heat_sp",       "Bediening: kamer-setpoint (graden C)", 's'},
+  {"heat_auto",     "Bediening: verwarming automatisch (1 = ja)", 's'},
+  {"relay_man",     "Bediening: relais 1 handmatig aan", 's'},
+  {"boiler_sp",     "Bediening: boiler-setpoint (graden C)", 's'},
+  {"sww_auto",      "Bediening: SWW automatisch (1 = ja)", 's'},
+  {"relay2_man",    "Bediening: relais 2 handmatig aan", 's'},
+  {"pixel_mode_0",  "Bediening: pixel 0-modus (0 AUTO, 1 MANUEEL)", 's'},
+  {"pixel0_man_on", "Bediening: pixel 0 handmatig aan", 's'},
+  {"pixel_on_*",    "Bediening: pixel %d aan", 's'},
+  {"neo_r",         "Bediening: kleur rood (0-255)", 's'},
+  {"neo_g",         "Bediening: kleur groen (0-255)", 's'},
+  {"neo_b",         "Bediening: kleur blauw (0-255)", 's'},
+  {"fade_duration", "Bediening: faden (s)", 's'},
+  {"light_on_min",  "Bediening: licht na beweging (min)", 's'},
+  {"bed_state",     "Bediening: bed-modus aan", 's'},
+};
+const int CFG_LABELS_N = sizeof(CFG_LABELS) / sizeof(CFG_LABELS[0]);   // NVS-naamruimte + gebruikte vakjes (/advanced)
 
 // v1.9: maak IO12/IO13 los van de ingebouwde USB-PHY (pad uit, interne pull-ups uit)
 void releaseUsbPins() {
@@ -62,7 +117,7 @@ String getJSON();   // v1.9: voorwaartse declaratie (wordt gebruikt vóór de de
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
 
-#define VH_VERSION "1.15"
+#define VH_VERSION "1.16"
 
 // ============== PIN DEFINITIONS (actief) ==============
 #define DHT_PIN      6   // IO6  - DHT22 data
@@ -1017,6 +1072,127 @@ void checkStaticDns() {
     WiFi.setDNS(static_gw, DNS_BACKUP);
     Serial.printf("[DNS] was leeg -> opnieuw gezet: %s + %s\n", WiFi.dnsIP(0).toString().c_str(), WiFi.dnsIP(1).toString().c_str());
   }
+}
+
+// ============== v1.16: CONFIG-EXPORT /config.json ==============
+void cfgPrintJsonStr(AsyncResponseStream *p, const char *v) {
+  p->print('"');
+  for (const char *c = v; *c; c++) {
+    if (*c == '"' || *c == '\\') { p->print('\\'); p->print(*c); }
+    else if ((uint8_t)*c < 0x20) p->printf("\\u%04x", (uint8_t)*c);
+    else p->print(*c);
+  }
+  p->print('"');
+}
+
+// Eén sleutel uitschrijven: "key": { "label": "...", "value": ... }
+void cfgPrintEntry(AsyncResponseStream *p, nvs_handle_t h, const char *key, nvs_type_t type, const char *label, char kind, bool &first) {
+  p->print(first ? "\n    " : ",\n    ");
+  first = false;
+  cfgPrintJsonStr(p, key);
+  p->print(": { \"label\": ");
+  cfgPrintJsonStr(p, label);
+  p->print(", \"value\": ");
+  switch (type) {
+    case NVS_TYPE_U8:  { uint8_t v = 0;  nvs_get_u8(h, key, &v);  p->printf("%u", (unsigned)v); break; }
+    case NVS_TYPE_I8:  { int8_t v = 0;   nvs_get_i8(h, key, &v);  p->printf("%d", (int)v); break; }
+    case NVS_TYPE_U16: { uint16_t v = 0; nvs_get_u16(h, key, &v); p->printf("%u", (unsigned)v); break; }
+    case NVS_TYPE_I16: { int16_t v = 0;  nvs_get_i16(h, key, &v); p->printf("%d", (int)v); break; }
+    case NVS_TYPE_U32: { uint32_t v = 0; nvs_get_u32(h, key, &v); p->printf("%lu", (unsigned long)v); break; }
+    case NVS_TYPE_I32: { int32_t v = 0;  nvs_get_i32(h, key, &v); p->printf("%ld", (long)v); break; }
+    case NVS_TYPE_STR: {
+      size_t len = 0;
+      if (nvs_get_str(h, key, NULL, &len) != ESP_OK || len == 0 || len > 512) { p->print("\"\""); break; }
+      char *buf = (char *)malloc(len);
+      if (!buf) { p->print("null"); break; }
+      nvs_get_str(h, key, buf, &len);
+      if (kind == 'x') p->print(buf[0] ? "\"***\"" : "\"\"");
+      else cfgPrintJsonStr(p, buf);
+      free(buf);
+      break;
+    }
+    case NVS_TYPE_BLOB: {
+      uint8_t b[32]; size_t len = sizeof(b);
+      if (nvs_get_blob(h, key, b, &len) != ESP_OK) { p->print("null"); break; }
+      if (kind == 'f' && len == 4) { float f; memcpy(&f, b, 4); p->printf("%.2f", f); break; }
+      p->print('"');
+      for (size_t i = 0; i < len; i++) p->printf("%02X", b[i]);
+      p->print('"');
+      break;
+    }
+    default: p->print("null"); break;
+  }
+  p->print(" }");
+}
+
+void handleConfigExport(AsyncWebServerRequest *request) {
+  // datum komt van de browser (?d=JJJJ-MM-DD); de controller heeft geen klok
+  char date[11] = "";
+  if (request->hasParam("d")) {
+    String d = request->getParam("d")->value();
+    int n = 0;
+    for (unsigned i = 0; i < d.length() && n < 10; i++) { char c = d[i]; if ((c >= '0' && c <= '9') || c == '-') date[n++] = c; }
+    date[n] = 0;
+  }
+  // alle sleutels van de naamruimte verzamelen
+  const int MAXK = 160;
+  struct K { char key[16]; nvs_type_t type; bool done; };
+  K *keys = (K *)malloc(sizeof(K) * MAXK);
+  if (!keys) { request->send(500, "text/plain", "geen geheugen"); return; }
+  int nk = 0;
+  nvs_iterator_t it = NULL;
+  esp_err_t res = nvs_entry_find(NVS_DEFAULT_PART_NAME, "sjalay-cfg", NVS_TYPE_ANY, &it);
+  while (res == ESP_OK && nk < MAXK) {
+    nvs_entry_info_t info;
+    nvs_entry_info(it, &info);
+    strlcpy(keys[nk].key, info.key, sizeof(keys[nk].key));
+    keys[nk].type = info.type; keys[nk].done = false; nk++;
+    res = nvs_entry_next(&it);
+  }
+  nvs_release_iterator(it);
+  nvs_handle_t h;
+  if (nvs_open("sjalay-cfg", NVS_READONLY, &h) != ESP_OK) { free(keys); request->send(500, "text/plain", "NVS niet leesbaar"); return; }
+
+  AsyncResponseStream *p = request->beginResponseStream("application/json");
+  if (request->hasParam("dl")) {
+    char fn[96], rn[48]; int n = 0;
+    for (const char *c = room_id; *c && n < 40; c++) if (isalnum((uint8_t)*c) || *c == '-' || *c == '_') rn[n++] = *c;
+    rn[n] = 0;
+    snprintf(fn, sizeof(fn), "attachment; filename=\"%s_config%s%s.json\"", rn[0] ? rn : "controller", date[0] ? "_" : "", date);
+    p->addHeader("Content-Disposition", fn);
+  }
+  p->print("{\n  \"room\": "); cfgPrintJsonStr(p, room_id);
+  p->print(",\n  \"version\": \"" VH_VERSION "\"");
+  p->print(",\n  \"date\": "); cfgPrintJsonStr(p, date);
+  p->print(",\n  \"mac\": "); cfgPrintJsonStr(p, mac_address);
+  p->printf(",\n  \"ip\": \"%s\"", WiFi.localIP().toString().c_str());
+  p->print(",\n  \"nvs\": {");
+  bool first = true;
+  char kbuf[20], lbuf[72];
+  for (int t = 0; t < CFG_LABELS_N; t++) {
+    const CfgLabel &L = CFG_LABELS[t];
+    size_t kl = strlen(L.key);
+    if (kl && L.key[kl - 1] == '*') {            // reeks: key0, key1, ...
+      for (int idx = 0; idx < 64; idx++) {
+        snprintf(kbuf, sizeof(kbuf), "%.*s%d", (int)(kl - 1), L.key, idx);
+        for (int i = 0; i < nk; i++) if (!keys[i].done && !strcmp(keys[i].key, kbuf)) {
+          snprintf(lbuf, sizeof(lbuf), L.label, idx);
+          cfgPrintEntry(p, h, kbuf, keys[i].type, lbuf, L.kind, first);
+          keys[i].done = true;
+        }
+      }
+    } else {
+      for (int i = 0; i < nk; i++) if (!keys[i].done && !strcmp(keys[i].key, L.key)) {
+        cfgPrintEntry(p, h, L.key, keys[i].type, L.label, L.kind, first);
+        keys[i].done = true;
+      }
+    }
+  }
+  for (int i = 0; i < nk; i++) if (!keys[i].done) cfgPrintEntry(p, h, keys[i].key, keys[i].type, "(geen label)", 's', first);
+  p->print("\n  }\n}\n");
+  nvs_close(h);
+  free(keys);
+  request->send(p);
 }
 
 // ============== v1.15: LOGIN EN BEVEILIGING ==============
@@ -2053,6 +2229,15 @@ void handleSettings(AsyncWebServerRequest *request) {
     "<button type=\"submit\">Opslaan &amp; herstart</button>"
     "</form>");
 
+  // v1.16: config bewaren
+  p->print("<div class=\"group-title\">Configuratie bewaren</div>"
+    "<p style=\"font-size:13px;color:#555;\">Alle instellingen met uitleg, in de volgorde van deze pagina (wachtwoorden als ***). "
+    "Na elke wijziging hier: downloaden en bewaren, voor als de controller ooit vervangen moet worden.</p>"
+    "<a class=\"btn\" id=\"cfgview\" href=\"/config.json\" target=\"_blank\">Bekijken</a> "
+    "<a class=\"btn\" id=\"cfgdl\" href=\"/config.json?dl=1\">Downloaden</a>"
+    "<script>(function(){var d=new Date();var s=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);"
+    "document.getElementById('cfgview').href='/config.json?d='+s;document.getElementById('cfgdl').href='/config.json?dl=1&d='+s;})();</script>");
+
   p->print("<div class=\"group-title\">Crash-log</div><table>");
   p->printf("<tr><td class=\"label\">Aantal geregistreerd</td><td class=\"value\">%u</td></tr>", (unsigned)getCrashCount());
   p->print("</table><a class=\"btn\" href=\"/clear_crash_log\">Wis crash-log</a>");
@@ -2663,6 +2848,7 @@ void setup() {
     if (!authAllowed(request, ACC_USER)) return;   // v1.15: de landingspagina leest /json
     request->send(200, "application/json", getJSON());
   });
+  server.on("/config.json", HTTP_GET, [](AsyncWebServerRequest *r) { if (authAllowed(r, ACC_ADMIN)) handleConfigExport(r); });   // v1.16
   server.on("/reboot", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (!authAllowed(request, ACC_ADMIN)) return;   // v1.15
     request->send(200, "text/plain", "Herstart...");
